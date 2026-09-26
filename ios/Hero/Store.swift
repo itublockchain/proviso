@@ -108,4 +108,15 @@ final class Store {
             approvals[idx] = updated
         }
     }
+
+    /// Starts the World ID for Agents linking flow ("this agent works for me").
+    func startWorldLink() async throws -> WorldLink {
+        let link = try await api.linkWorldID()
+        if demoMode { Task { await mockAPI.simulateWorldLinkCompletion(linkId: link.linkId) } }
+        return link
+    }
+
+    func worldLinkStatus(id: String) async throws -> WorldLinkStatusResponse {
+        try await api.fetchWorldLinkStatus(id: id)
+    }
 }

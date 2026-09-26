@@ -9,6 +9,8 @@ protocol API: Sendable {
     func fetchApproval(id: String) async throws -> Approval
     func fetchBudgets() async throws -> BudgetsResponse
     func updateBudget(name: String, limitUsd: Double, pct: Double?) async throws -> Category
+    func linkWorldID() async throws -> WorldLink
+    func fetchWorldLinkStatus(id: String) async throws -> WorldLinkStatusResponse
 }
 
 enum APIError: Error, LocalizedError {
@@ -96,5 +98,15 @@ final class LiveAPI: API {
 
     func updateBudget(name: String, limitUsd: Double, pct: Double?) async throws -> Category {
         try await send("PUT", "api/budgets/\(name)", body: BudgetBody(limitUsd: limitUsd, pct: pct))
+    }
+
+    private struct EmptyBody: Encodable {}
+
+    func linkWorldID() async throws -> WorldLink {
+        try await send("POST", "api/world/link", body: EmptyBody())
+    }
+
+    func fetchWorldLinkStatus(id: String) async throws -> WorldLinkStatusResponse {
+        try await get("api/world/link/\(id)")
     }
 }

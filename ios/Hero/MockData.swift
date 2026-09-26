@@ -176,10 +176,11 @@ enum MockData {
             autoUsd: 400,
             maxUsd: 500,
             orderHash: "0x71cd8f...aa029e",
-            approvalUrl: "https://simulator.worldcoin.org/approve/order-ps5-1",
+            approvalUrl: "https://sandbox.auth.world.org/verify/order-ps5-1",
             expiresAt: daysFromNow(1),
             status: .pending,
-            txHash: nil
+            txHash: nil,
+            userCode: "WRLD-7F2A"
         )
     ]
 
@@ -215,6 +216,8 @@ actor MockAPI: API {
     private var requests: [HeroRequest] = MockData.requests
     private var approvals: [Approval] = MockData.approvals
     private var categories: [Category] = [MockData.hobbyCategory, MockData.needsCategory]
+    private var worldLinked = false
+    private var pendingWorldLinkId: String?
 
     func chat(requestId: String?, message: String) async throws -> ChatReply {
         try? await Task.sleep(for: .milliseconds(500))
@@ -289,7 +292,9 @@ actor MockAPI: API {
     }
 
     func fetchBudgets() async throws -> BudgetsResponse {
-        BudgetsResponse(wallet: MockData.wallet, categories: categories)
+        var wallet = MockData.wallet
+        wallet.worldLinked = worldLinked
+        return BudgetsResponse(wallet: wallet, categories: categories)
     }
 
     func updateBudget(name: String, limitUsd: Double, pct: Double?) async throws -> Category {
@@ -308,5 +313,34 @@ actor MockAPI: API {
             approvals[idx].status = .paid
             approvals[idx].txHash = "0xpaid...\(UUID().uuidString.prefix(6))"
         }
+    }
+
+    func linkWorldID() async throws -> WorldLink {
+        let id = "link-\(UUID().uuidString.prefix(8))"
+        pendingWorldLinkId = id
+        return WorldLink(
+            linkId: id,
+            userCode: Self.randomUserCode(),
+            approvalUrl: "https://sandbox.auth.world.org/verify/\(id)",
+            expiresAt: MockData.daysFromNow(1)
+        )
+    }
+
+    func fetchWorldLinkStatus(id: String) async throws -> WorldLinkStatusResponse {
+        guard pendingWorldLinkId == id else { return WorldLinkStatusResponse(status: .expired) }
+        return WorldLinkStatusResponse(status: worldLinked ? .linked : .pending)
+    }
+
+    /// Simulates the human linking World ID after a short delay, for the Budgets/Settings polling demo.
+    func simulateWorldLinkCompletion(linkId: String) async {
+        try? await Task.sleep(for: .seconds(4))
+        guard pendingWorldLinkId == linkId else { return }
+        worldLinked = true
+    }
+
+    private static func randomUserCode() -> String {
+        let letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+        func group() -> String { String((0..<4).map { _ in letters.randomElement()! }) }
+        return "\(group())-\(group())"
     }
 }

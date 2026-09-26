@@ -18,6 +18,14 @@ enum ApprovalStatus: String, Codable {
     case paid
 }
 
+/// Status of a World ID for Agents link/verification flow (POST api/world/link, GET api/world/link/{id}).
+enum WorldLinkStatus: String, Codable {
+    case pending
+    case linked
+    case denied
+    case expired
+}
+
 // MARK: - Core models (match backend contract exactly)
 
 struct PricePoint: Codable, Identifiable, Hashable {
@@ -98,7 +106,25 @@ struct Approval: Codable, Identifiable, Hashable {
     var status: ApprovalStatus
     var txHash: String?
     var denyReason: String? = nil
+    /// Present when this approval uses the World ID for Agents device flow: `approvalUrl` is then
+    /// the sandbox verification page and the human confirms this code there.
+    var userCode: String? = nil
     var id: String { orderId }
+}
+
+/// POST api/world/link response: a one-time "this agent works for me" World ID verification.
+struct WorldLink: Codable, Hashable, Identifiable {
+    var linkId: String
+    var userCode: String
+    var approvalUrl: String
+    var expiresAt: Date
+    var id: String { linkId }
+}
+
+/// GET api/world/link/{id} response.
+struct WorldLinkStatusResponse: Codable {
+    var status: WorldLinkStatus
+    var error: String? = nil
 }
 
 struct Category: Codable, Identifiable, Hashable {
@@ -117,6 +143,8 @@ struct Wallet: Codable, Hashable {
     var usdcBalance: Double
     var allowance: Double
     var agent: String
+    /// True once the human has linked World ID to this agent ("this agent works for me").
+    var worldLinked: Bool? = nil
 }
 
 struct BudgetsResponse: Codable {
