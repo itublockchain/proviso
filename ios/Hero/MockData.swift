@@ -128,7 +128,34 @@ enum MockData {
             ActivityEntry(date: daysAgo(20), text: "Policy written to ENS", txHash: "0x1234...beef"),
             ActivityEntry(date: daysAgo(12), text: "Agent bought item: $609", txHash: "0xdead...5678"),
             ActivityEntry(date: daysAgo(12), text: "USDC transferred to merchant", txHash: "0xf00d...cafe")
-        ]
+        ],
+        order: MerchantOrder(
+            id: "HD-1A2B3C4D",
+            status: "delivered",
+            simulated: true,
+            merchantName: "Hero Demo Merchant",
+            merchantAddress: "0xB4c400000000000000000000000000000006371",
+            registry: "hero-verified.eth",
+            merchantVerified: true,
+            title: "LEGO Millennium Falcon",
+            imageUrl: nil,
+            priceUsd: 609,
+            listPriceUsd: 650,
+            store: "lego.com",
+            storeUrl: "https://www.lego.com",
+            txHash: "0xdead000000000000000000000000000000000000000000000000000000005678",
+            orderHash: "0xfeed000000000000000000000000000000000000000000000000000000beef",
+            payer: MockData.wallet.address,
+            humanApproved: false,
+            paidAt: daysAgo(12),
+            timeline: [
+                OrderStep(status: "paid", label: "Paid on Sepolia", at: daysAgo(12), done: true),
+                OrderStep(status: "confirmed", label: "Confirmed by merchant", at: daysAgo(12), done: true),
+                OrderStep(status: "shipped", label: "Shipped", at: daysAgo(11), done: true),
+                OrderStep(status: "delivered", label: "Delivered", at: daysAgo(10), done: true)
+            ],
+            signature: "0xsig0000000000000000000000000000000000000000000000000000000000d00d"
+        )
     )
 
     static let switch2 = HeroRequest(
@@ -414,7 +441,32 @@ actor MockAPI: API {
                 r.status = .bought
                 r.boughtAt = now
                 r.strategy?.summary = "Price dropped into your auto band, so I bought it on my own."
-                log("Bought for \(price.usd) (auto band)", tx: "0xdemo...\(UUID().uuidString.prefix(6))")
+                let txHash = "0xdemo...\(UUID().uuidString.prefix(6))"
+                log("Bought for \(price.usd) (auto band)", tx: txHash)
+                let orderId = "HD-\(UUID().uuidString.prefix(8).uppercased())"
+                r.order = MerchantOrder(
+                    id: orderId,
+                    status: "paid",
+                    simulated: true,
+                    merchantName: "Hero Demo Merchant",
+                    merchantAddress: "0xB4c400000000000000000000000000000006371",
+                    registry: "hero-verified.eth",
+                    merchantVerified: true,
+                    title: r.title,
+                    imageUrl: r.imageUrl,
+                    priceUsd: price,
+                    listPriceUsd: price * 1.08,
+                    store: "keychron.com",
+                    storeUrl: "https://keychron.com",
+                    txHash: txHash,
+                    orderHash: "0xorder...\(UUID().uuidString.prefix(6))",
+                    payer: MockData.wallet.address,
+                    humanApproved: false,
+                    paidAt: now,
+                    timeline: Self.freshTimeline(paidAt: now),
+                    signature: "0xsig...\(UUID().uuidString.prefix(6))"
+                )
+                Task { await self.advanceOrder(requestId: r.id, orderId: orderId) }
             case .approval:
                 let code = Self.randomUserCode()
                 approvals.insert(Approval(
@@ -439,6 +491,30 @@ actor MockAPI: API {
         }
         requests[i] = r
         return r
+    }
+
+    /// Same demo clock as the backend: paid 0s → confirmed 5s → shipped 20s → delivered 45s.
+    private static func freshTimeline(paidAt: Date) -> [OrderStep] {
+        [
+            OrderStep(status: "paid", label: "Paid on Sepolia", at: paidAt, done: true),
+            OrderStep(status: "confirmed", label: "Confirmed by merchant", at: paidAt.addingTimeInterval(5), done: false),
+            OrderStep(status: "shipped", label: "Shipped", at: paidAt.addingTimeInterval(20), done: false),
+            OrderStep(status: "delivered", label: "Delivered", at: paidAt.addingTimeInterval(45), done: false)
+        ]
+    }
+
+    /// Advances a freshly-bought demo order through its timeline with no polling required —
+    /// mirrors the backend's compressed 45s fulfillment clock so the UI has something to see.
+    private func advanceOrder(requestId: String, orderId: String) async {
+        for (delay, status) in [(5.0, "confirmed"), (15.0, "shipped"), (25.0, "delivered")] {
+            try? await Task.sleep(for: .seconds(delay))
+            guard let i = requests.firstIndex(where: { $0.id == requestId }), requests[i].order?.id == orderId else { return }
+            requests[i].order?.status = status
+            if let si = requests[i].order?.timeline.firstIndex(where: { $0.status == status }) {
+                requests[i].order?.timeline[si].done = true
+                requests[i].order?.timeline[si].at = Date()
+            }
+        }
     }
 
     /// Same band math as the backend's `demoPrice`: auto/attack land ≤ auto, approval in (auto, max], blocked > max.
