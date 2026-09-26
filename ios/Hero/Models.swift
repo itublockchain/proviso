@@ -90,6 +90,43 @@ struct HeroRequest: Codable, Identifiable, Hashable {
     var events: [SaleEvent]
     var activity: [ActivityEntry]
     var boughtAt: Date? = nil
+    /// Post-payment fulfillment from Hero's simulated demo merchant, once bought.
+    var order: MerchantOrder? = nil
+}
+
+/// One step of a merchant order's fulfillment timeline (paid/confirmed/shipped/delivered).
+struct OrderStep: Codable, Hashable, Identifiable {
+    var status: String
+    var label: String
+    var at: Date
+    var done: Bool
+    var id: String { status }
+}
+
+/// GET merchant/orders/{id} (public) and embedded in `HeroRequest.order`: the merchant's
+/// EIP-712-signed receipt for a bought item, plus a simulated fulfillment timeline.
+struct MerchantOrder: Codable, Hashable, Identifiable {
+    var id: String
+    /// "paid" | "confirmed" | "shipped" | "delivered"
+    var status: String
+    var simulated: Bool
+    var merchantName: String
+    var merchantAddress: String
+    var registry: String
+    var merchantVerified: Bool
+    var title: String
+    var imageUrl: String?
+    var priceUsd: Double
+    var listPriceUsd: Double?
+    var store: String?
+    var storeUrl: String?
+    var txHash: String?
+    var orderHash: String
+    var payer: String
+    var humanApproved: Bool
+    var paidAt: Date
+    var timeline: [OrderStep]
+    var signature: String?
 }
 
 /// Draft parsed by the AI agent from a chat message, editable before writing to ENS.

@@ -147,6 +147,15 @@ final class Store {
         requests.first { $0.id == id }
     }
 
+    /// Re-fetches one request — used by RequestDetailView to poll a live order's fulfillment status.
+    func refreshRequest(id: String) async {
+        guard let updated = try? await run({ try await api.fetchRequest(id: id) })
+        else { return }
+        if let idx = requests.firstIndex(where: { $0.id == id }) {
+            withAnimation(.snappy) { requests[idx] = updated }
+        }
+    }
+
     func approval(id: String) -> Approval? {
         approvals.first { $0.orderId == id }
     }
