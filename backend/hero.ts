@@ -746,7 +746,7 @@ export function mountHero(app: Express, deps: Deps) {
     a.mode = "demo";
     saveAccounts();
     void syncDemoContinuity(a).catch((e) => console.error("setContinuity", e?.shortMessage ?? e));
-    res.json(await meView(res));
+    res.json({ ok: true, ...(await meView(res)) });
   });
 
   app.post("/api/chat", async (req, res) => {
