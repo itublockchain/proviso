@@ -10,25 +10,40 @@ struct RequestDetailView: View {
     @State private var showDemoMenu = false
     @State private var demoError: String?
 
+    /// The freshest copy of this request — the Store may have a newer one from polling.
+    private var current: HeroRequest { store.request(id: request.id) ?? request }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.spacingXL) {
                 heroHeader
+                if let order = current.order {
+                    OrderSection(order: order, request: current)
+                }
                 priceSection
-                PolicyBar(request: request)
-                PriceHistoryChart(request: request)
-                if let strategy = request.strategy {
+                PolicyBar(request: current)
+                PriceHistoryChart(request: current)
+                if let strategy = current.strategy {
                     StrategySection(strategy: strategy)
                 }
-                PolicySection(request: request)
-                ActivityTimeline(activity: request.activity)
+                PolicySection(request: current)
+                ActivityTimeline(activity: current.activity)
             }
             .padding(.horizontal, Theme.spacingM)
             .padding(.vertical, Theme.spacingL)
         }
         .background(Theme.background)
-        .navigationTitle(request.title)
+        .navigationTitle(current.title)
         .navigationBarTitleDisplayMode(.inline)
+        // Live order fulfillment: poll while the screen is visible and not yet delivered.
+        .task(id: request.id) {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if Task.isCancelled { return }
+                await store.refreshRequest(id: request.id)
+                if current.order == nil || current.order?.status == "delivered" { return }
+            }
+        }
         .toolbar {
             if showDemoControls {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -65,24 +80,24 @@ struct RequestDetailView: View {
 
     private var heroHeader: some View {
         VStack(alignment: .leading, spacing: Theme.spacingM) {
-            DetailHeroImage(imageUrl: request.imageUrl, category: request.category)
+            DetailHeroImage(imageUrl: current.imageUrl, category: current.category)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(request.title)
+                        Text(current.title)
                             .font(.title2.bold())
                             .foregroundStyle(Theme.textPrimary)
                             .onTapGesture(count: 3) { showDemoMenu = true }
-                        if let merchant = request.merchant {
+                        if let merchant = current.merchant {
                             Text(merchant)
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.textSecondary)
                         }
                     }
                     Spacer()
-                    StatusPill(status: request.status)
+                    StatusPill(status: current.status)
                 }
-                Text(request.query)
+                Text(current.query)
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -91,20 +106,20 @@ struct RequestDetailView: View {
 
     private var priceSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(request.currentPrice.usd)
+            Text(current.currentPrice.usd)
                 .font(.system(size: 48, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(Theme.textPrimary)
-                .contentTransition(.numericText(value: request.currentPrice))
+                .contentTransition(.numericText(value: current.currentPrice))
                 .onLongPressGesture(minimumDuration: 0.8) { showDemoMenu = true }
-            if let target = request.targetPrice {
+            if let target = current.targetPrice {
                 deltaLine(target: target)
             }
         }
     }
 
     private func deltaLine(target: Double) -> some View {
-        let delta = request.currentPrice - target
+        let delta = current.currentPrice - target
         let isAbove = delta > 0.5
         let isBelow = delta < -0.5
         let color: Color = isAbove ? Theme.accentAmber : (isBelow ? Theme.accentGreen : Theme.textSecondary)
@@ -150,6 +165,155 @@ private struct DetailHeroImage: View {
         .frame(height: 220)
         .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+}
+
+/// Shown right under the header once an order exists: what was bought, from whom, how it was
+/// approved, the on-chain payment, and a simulated merchant fulfillment timeline.
+private struct OrderSection: View {
+    let order: MerchantOrder
+    let request: HeroRequest
+    @Environment(Store.self) private var store
+    @State private var safariURL: URL?
+
+    private var receiptURL: URL? {
+        URL(string: store.backendURLString)?.appendingPathComponent("merchant/orders/\(order.id)")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.spacingS) {
+            HStack {
+                SectionHeader(title: "Order \(order.id)")
+                Spacer()
+                Text("SIMULATED MERCHANT")
+                    .font(.caption2.weight(.semibold))
+                    .kerning(0.4)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Theme.accentAmber.opacity(0.16))
+                    .foregroundStyle(Theme.accentAmber)
+                    .clipShape(Capsule())
+            }
+
+            itemRow
+
+            VStack(spacing: 0) {
+                row("Merchant") {
+                    Text(order.merchantVerified ? "\(order.merchantName) ✓ \(order.registry)" : order.merchantName)
+                }
+                HairlineDivider()
+                row("Approval") {
+                    Text(order.humanApproved ? "Approved by you with World ID" : "Bought on its own (under \(request.autoUsd.usd))")
+                }
+                HairlineDivider()
+                row("Payment") {
+                    if let txHash = order.txHash {
+                        Button { safariURL = URL(string: "https://sepolia.etherscan.io/tx/\(txHash)") } label: {
+                            Text(txHash.shortAddress).font(.footnote.monospaced())
+                        }
+                        .foregroundStyle(Theme.accentBlue)
+                    } else {
+                        Text("—")
+                    }
+                }
+            }
+
+            OrderTimelineView(steps: order.timeline)
+
+            VStack(alignment: .leading, spacing: Theme.spacingXS) {
+                Text("Signed by \(order.merchantAddress.shortAddress) · listed in \(order.registry)")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: Theme.spacingM) {
+                    if let receiptURL {
+                        Button("View signed receipt") { safariURL = receiptURL }
+                    }
+                    if let storeUrl = order.storeUrl, let url = URL(string: storeUrl) {
+                        Button("Visit store") { safariURL = url }
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.accentBlue)
+            }
+            .padding(.top, 4)
+
+            Text("Payment and your rules are real (Ethereum Sepolia). Store checkout and shipping are simulated by Hero's demo merchant — 7 days compressed to 45 seconds.")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.top, 2)
+        }
+        .sheet(item: $safariURL) { url in
+            SafariView(url: url)
+        }
+    }
+
+    private var itemRow: some View {
+        HStack(spacing: 12) {
+            ProductThumbnail(imageUrl: order.imageUrl ?? request.imageUrl, category: request.category, size: 48)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(order.title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                if let store = order.store {
+                    Text("Listing from \(store)").font(.caption).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(order.priceUsd.usd).font(.subheadline.weight(.semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                if let listPrice = order.listPriceUsd, listPrice > order.priceUsd {
+                    Text(listPrice.usd).font(.caption2.monospacedDigit()).strikethrough().foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func row(_ label: String, @ViewBuilder value: () -> some View) -> some View {
+        HStack {
+            Text(label).font(.footnote).foregroundStyle(Theme.textSecondary)
+            Spacer()
+            value().font(.footnote).foregroundStyle(Theme.textPrimary)
+        }
+        .padding(.vertical, 9)
+    }
+}
+
+/// Vertical 4-step fulfillment timeline: filled dots for done steps, hollow for pending, with a
+/// subtle animation when a step flips to done (driven by polling in RequestDetailView).
+private struct OrderTimelineView: View {
+    let steps: [OrderStep]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(spacing: 0) {
+                        Circle()
+                            .fill(step.done ? Theme.accentGreen : Theme.background)
+                            .overlay(Circle().stroke(step.done ? Theme.accentGreen : Theme.border, lineWidth: 1.5))
+                            .frame(width: 8, height: 8)
+                            .padding(.top, 4)
+                            .animation(.easeInOut(duration: 0.35), value: step.done)
+                        if index < steps.count - 1 {
+                            Rectangle().fill(Theme.border).frame(width: 1).frame(maxHeight: .infinity)
+                        }
+                    }
+                    .frame(width: 8)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(step.label)
+                            .font(.footnote.weight(step.done ? .semibold : .regular))
+                            .foregroundStyle(step.done ? Theme.textPrimary : Theme.textSecondary)
+                        if step.done {
+                            Text(step.at.formatted(date: .omitted, time: .shortened))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    .padding(.bottom, 14)
+                }
+            }
+        }
+        .padding(.top, 8)
     }
 }
 
