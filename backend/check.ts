@@ -307,9 +307,10 @@ const tok = new URL(ws.pageUrl).pathname.split("/").pop();
 assert.deepEqual(ws, { url: `https://link.metamask.io/dapp/hero.test/w/${tok}`, pageUrl: `https://hero.test/w/${tok}`, ensName: "mallory.alice.eth" });
 assert.match((await get(`/w/${tok}`)).headers.get("content-type")!, /^text\/html/);
 assert.deepEqual(await (await get(`/w/${tok}/status`)).json(),
-  { funded: false, done: { approve: false, account: false, continuity: false }, ready: false, ensName: "mallory.alice.eth", address: "" });
+  { signed: false, done: { resolver: false, name: false, account: false }, ready: false, ensName: "mallory.alice.eth", address: "", txs: [] });
 assert.equal((await get("/w/not-a-token/status")).status, 404);
 assert.equal((await post(`/w/${tok}/connect`, undefined, { address: "0x0000000000000000000000000000000000000001" })).status, 503); // no chain here
+assert.equal((await post(`/w/${tok}/permit`, undefined, { signature: "0x" + "11".repeat(65) })).status, 503);
 assert.equal((await (await post("/api/wallet/demo", mallory, {})).json()).walletStatus, "demo");
 assert.equal((await get("/api/logout", session, "POST")).status, 200);
 assert.equal((await get("/api/me", session)).status, 401); // logged out

@@ -41,30 +41,38 @@ button:disabled{opacity:.45}
 .big{width:76px;height:76px;border-radius:50%;background:var(--blue);color:#fff;font-size:40px;line-height:76px;margin:0 auto 28px}
 #ok h1{font-size:28px;margin-bottom:10px;word-break:break-word}
 #ok .sub{color:var(--sec);margin-bottom:40px}
+.explain{font-size:15px;margin:0 0 16px;padding:14px 16px;border:1px solid var(--line);border-radius:14px}
+.ph{font-size:15px;font-weight:600;margin-top:-12px}
+#prog ol{margin:12px 0 16px}
 </style></head><body><main>
 <section id="setup">
   <div class="brand">Hero</div>
   <h1>Connect your wallet</h1>
   <div class="intro">
-    <p>Hero sends you test ETH for gas and sets up your name.</p>
-    <p>Then you sign 3 things in MetaMask:</p>
-    <p>let the contract spend within your rules, point it at your rules, and lock bigger buys to your World ID.</p>
+    <p>Hero shops from your own wallet, with no deposits.</p>
+    <p>You sign once in MetaMask: no gas, no waiting. Hero does the rest.</p>
   </div>
   <ol id="steps">
     <li data-id="wallet"><span class="ic"></span><div><div class="t">Connect wallet</div><div class="s"></div></div></li>
     <li data-id="chain"><span class="ic"></span><div><div class="t">Switch to Sepolia</div><div class="s"></div></div></li>
-    <li data-id="prep"><span class="ic"></span><div><div class="t">Preparing your name &amp; gas</div><div class="s"></div></div></li>
-    <li data-id="approve"><span class="ic"></span><div><div class="t">1) Allow spending within your rules</div><div class="s"></div></div></li>
-    <li data-id="account"><span class="ic"></span><div><div class="t">2) Point Hero to your rules</div><div class="s"></div></div></li>
-    <li data-id="continuity"><span class="ic"></span><div><div class="t">3) Lock big buys to your World ID</div><div class="s"></div></div></li>
-    <li data-id="done"><span class="ic"></span><div><div class="t">Done</div><div class="s"></div></div></li>
+    <li data-id="approve"><span class="ic"></span><div><div class="t">Approve Hero</div><div class="s">One signature, no gas</div></div></li>
   </ol>
+  <div id="prog" class="hidden">
+    <p class="ph">Hero is setting up your name and rules…</p>
+    <ol>
+      <li data-id="resolver"><span class="ic"></span><div><div class="t">Your rules contract</div><div class="s">You are its only admin</div></div></li>
+      <li data-id="name"><span class="ic"></span><div><div class="t">Your name</div><div class="s"></div></div></li>
+      <li data-id="account"><span class="ic"></span><div><div class="t">Hero linked to your wallet</div><div class="s">Spending cap and your World ID lock</div></div></li>
+    </ol>
+    <div id="txs" class="s"></div>
+  </div>
   <div id="noeth" class="hidden">
     <p>Open this page in MetaMask to continue.</p>
     <a id="mm" class="btn">Open in MetaMask</a>
     <button id="copy" class="ghost">Copy link</button>
   </div>
-  <button id="go">Connect &amp; set up</button>
+  <p id="explain" class="explain hidden"></p>
+  <button id="go">Connect MetaMask</button>
   <p id="hint" class="note"></p>
 </section>
 <section id="ok" class="hidden">
@@ -81,12 +89,12 @@ const CHAIN = "0xaa36a7", USDC = "0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e", E
 const $ = (id) => document.getElementById(id);
 const T = encodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
 const H = { "content-type": "application/json", "ngrok-skip-browser-warning": "1" };
-const BATCH = new URLSearchParams(location.search).get("batch") === "1";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const code = (e) => e?.code ?? e?.data?.originalError?.code;
+const short = (a) => a.slice(0, 6) + "…" + a.slice(-4);
 const rows = {};
 document.querySelectorAll("li[data-id]").forEach((el) => { rows[el.dataset.id] = el; el.className = "pending"; });
-const go = $("go"), hint = $("hint");
+const go = $("go"), hint = $("hint"), explain = $("explain");
 
 // MetaMask mobile injects window.ethereum late.
 const ethReady = new Promise((res) => {
@@ -104,28 +112,21 @@ async function api(path, body) {
   return j;
 }
 
-// Poll /status every 3s until ok(status); network blips keep polling, HTTP errors stop.
-async function until(ok, what) {
-  for (let i = 0; i < 100; i++) {
-    try { const s = await api("/status"); if (ok(s)) return s; }
-    catch (e) { if (e.status) throw e; }
-    await sleep(3000);
-  }
-  throw new Error(what + " is taking longer than usual.");
-}
-
 let cur = null;
-function set(id, state, sub, hash) {
+function set(id, state, sub) {
   const el = rows[id]; if (!el) return;
   el.className = state; if (state === "active") cur = id;
-  const s = el.querySelector(".s");
-  if (sub !== undefined) s.textContent = sub;
-  if (typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash)) {
+  if (sub !== undefined) el.querySelector(".s").textContent = sub;
+}
+
+function showTxs(txs) {
+  const box = $("txs"); box.textContent = "";
+  (Array.isArray(txs) ? txs : []).filter((h) => /^0x[0-9a-fA-F]{64}$/.test(h)).forEach((h) => {
     const a = document.createElement("a");
-    a.href = EXP + "/tx/" + hash; a.target = "_blank"; a.rel = "noopener";
-    a.textContent = (s.textContent ? " · " : "") + "View tx " + hash.slice(0, 10) + "…";
-    s.append(a);
-  }
+    a.href = EXP + "/tx/" + h; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = (box.childElementCount ? " · " : "Hero's transactions: ") + h.slice(0, 10) + "…";
+    box.append(a);
+  });
 }
 
 async function switchChain(eth) {
@@ -139,79 +140,89 @@ async function switchChain(eth) {
   }
 }
 
-async function canBatch(eth, from) {
-  try {
-    const c = await eth.request({ method: "wallet_getCapabilities", params: [from, [CHAIN]] });
-    const st = c?.[CHAIN]?.atomic?.status;
-    return st === "supported" || st === "ready";
-  } catch { return false; }
+// stage: "connect" -> "sign" -> "wait"; the button runs the current stage, so a cancel retries only that stage
+let stage = "connect", ctx = null, busy = false;
+
+async function connect() {
+  const eth = await ethReady;
+  if (!eth) return noEth();
+  $("prog").classList.add("hidden");
+  set("wallet", "active", "Approve the connection in MetaMask…");
+  const [from] = await eth.request({ method: "eth_requestAccounts" });
+  if (!from) throw new Error("No account selected in MetaMask.");
+  set("wallet", "done", short(from));
+  set("chain", "active", "");
+  await switchChain(eth);
+  set("chain", "done", "Sepolia test network");
+  set("approve", "active", "Preparing…");
+  let c;
+  try { c = await api("/connect", { address: from }); }
+  catch (e) {
+    if (e.status === 409) e.message = "This sign-in is already linked to another wallet. Switch to that account in MetaMask, then try again.";
+    throw e;
+  }
+  if (c.mode !== "permit" || !c.typedData) throw new Error("Unexpected server response.");
+  ctx = { eth, from, c };
+  const cap = Number(c.typedData.message.value) / 1e6;
+  explain.textContent = "One signature, no gas: lets Hero's contract spend up to $" + cap.toLocaleString("en-US")
+    + " from this wallet — only within your rules, which live at " + String(c.ensName) + ", and only with your World ID for bigger buys.";
+  explain.classList.remove("hidden");
+  set("approve", "pending", "One signature, no gas");
+  stage = "sign"; go.textContent = "Approve Hero";
 }
 
-let busy = false;
+async function sign() {
+  const { eth, from, c } = ctx;
+  set("approve", "active", "Sign in MetaMask…");
+  const signature = await eth.request({ method: "eth_signTypedData_v4", params: [from, JSON.stringify(c.typedData)] });
+  set("approve", "active", "Sending to Hero…");
+  try { await api("/permit", { signature }); }
+  catch (e) {
+    if (e.status === 400) { stage = "connect"; e.message = "That signature didn't match. Tap to sign again."; }
+    throw e;
+  }
+  set("approve", "done", "Signed · no gas");
+  stage = "wait";
+  await watch();
+}
+
+// Poll /status every 2s until Hero's transactions have landed.
+async function watch() {
+  explain.classList.add("hidden"); go.classList.add("hidden");
+  $("prog").classList.remove("hidden");
+  let readyAt = 0;
+  for (let i = 0; i < 150; i++) {
+    let s = null;
+    try { s = await api("/status"); } catch (e) { if (e.status) throw e; }
+    if (s) {
+      if (!s.signed && !s.ready) { stage = "connect"; throw new Error("Hero couldn't use that signature. Tap to sign again."); }
+      ["resolver", "name", "account"].forEach((id) => set(id, s.done && s.done[id] ? "done" : "active", id === "name" ? String(s.ensName || "") : undefined));
+      showTxs(s.txs);
+      if (s.ready) {
+        readyAt = readyAt || Date.now();
+        if ((s.done && s.done.name) || Date.now() - readyAt > 20000) return finish(String(s.ensName || "your name"));
+      }
+    }
+    await sleep(2000);
+  }
+  throw new Error("Setup is taking longer than usual. Tap to check again.");
+}
+
 async function run() {
   if (busy) return;
   busy = true; go.disabled = true; hint.textContent = "";
   try {
-    const eth = await ethReady;
-    if (!eth) return noEth();
-    set("wallet", "active", "Approve the connection in MetaMask…");
-    const [from] = await eth.request({ method: "eth_requestAccounts" });
-    if (!from) throw new Error("No account selected in MetaMask.");
-    set("wallet", "done", from.slice(0, 6) + "…" + from.slice(-4));
-    set("chain", "active", "");
-    await switchChain(eth);
-    set("chain", "done", "Sepolia test network");
-    set("prep", "active", "Reserving your name…");
-    let c;
-    try { c = await api("/connect", { address: from }); }
-    catch (e) {
-      if (e.status === 409) e.message = "This sign-in is already linked to another wallet. Switch to that account in MetaMask, then try again.";
-      throw e;
-    }
-    const name = String(c.ensName || "your name");
-    set("prep", "active", name + " · Hero is sending you test ETH for gas…");
-    let s = await until((x) => x.funded, "Funding");
-    set("prep", "done", name + " · gas received");
-    const isDone = (st, id) => !!(st.done && st.done[id]);
-    const calls = (Array.isArray(c.calls) ? c.calls : []).filter((x) => x && ["approve", "account", "continuity"].includes(x.id));
-    calls.forEach((x) => set(x.id, isDone(s, x.id) ? "done" : "pending", String(x.label || "")));
-    let todo = calls.filter((x) => !isDone(s, x.id));
-
-    if (BATCH && todo.length > 1 && (await canBatch(eth, from))) {
-      todo.forEach((x) => set(x.id, "active", "Confirm in MetaMask…"));
-      let sent = false;
-      try {
-        await eth.request({ method: "wallet_sendCalls", params: [{ version: "2.0.0", chainId: CHAIN, from, atomicRequired: true,
-          calls: todo.map((x) => ({ to: x.to, data: x.data })) }] });
-        sent = true;
-      } catch (e) { if (code(e) === 4001) throw e; } // unsupported: fall back to one-by-one
-      if (sent) {
-        todo.forEach((x) => set(x.id, "active", "Confirming on Sepolia…"));
-        await until((st) => todo.every((x) => isDone(st, x.id)), "Sepolia");
-        todo.forEach((x) => set(x.id, "done", String(x.label || "")));
-        todo = [];
-      } else todo.forEach((x) => set(x.id, "pending", String(x.label || "")));
-    }
-
-    // One at a time, waiting for each to land, so nonces can't collide.
-    for (const x of todo) {
-      set(x.id, "active", "Confirm in MetaMask…");
-      const h = await eth.request({ method: "eth_sendTransaction", params: [{ from, to: x.to, data: x.data }] });
-      set(x.id, "active", "Confirming on Sepolia", h);
-      await until((st) => isDone(st, x.id), "Sepolia");
-      set(x.id, "done", String(x.label || ""), h);
-    }
-    set("done", "active", "Finishing up…");
-    s = await until((x) => x.ready, "Finishing");
-    set("done", "done", "");
-    finish(String(s.ensName || name));
+    if (stage === "connect") await connect();
+    else if (stage === "sign") await sign();
+    else await watch();
   } catch (e) {
     const k = code(e);
     const m = k === 4001 ? "You cancelled — tap to try again"
       : k === -32002 ? "MetaMask already has a request open — check MetaMask."
       : String(e?.message || "Something went wrong.");
-    if (cur) set(cur, "error", m); else hint.textContent = m;
-    go.textContent = "Try again";
+    if (cur) set(cur, k === 4001 ? "pending" : "error", m); else hint.textContent = m;
+    go.classList.remove("hidden");
+    go.textContent = stage === "sign" ? "Approve Hero" : "Try again";
   } finally { busy = false; go.disabled = false; }
 }
 
@@ -240,6 +251,10 @@ $("usdc").addEventListener("click", async () => {
   } catch {}
 });
 ethReady.then((eth) => { if (!eth) noEth(); });
-api("/status").then((s) => { if (s.ready) finish(String(s.ensName || "your name")); }).catch(() => {});
+// reopened page: already done, or Hero is still setting up after an earlier signature
+api("/status").then((s) => {
+  if (s.ready) return finish(String(s.ensName || "your name"));
+  if (s.signed && !busy) { ["wallet", "chain", "approve"].forEach((id) => set(id, "done")); stage = "wait"; run(); }
+}).catch(() => {});
 </script>
 </body></html>`;

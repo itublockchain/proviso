@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   createPublicClient, createWalletClient, encodeAbiParameters, encodeFunctionData, getAddress, http, isAddressEqual, keccak256, namehash, nonceManager,
-  parseAbi, parseEther, parseEventLogs, stringToBytes, toHex, zeroHash, type Hex, type PrivateKeyAccount, type WalletClient,
+  parseAbi, parseAbiParameters, parseEventLogs, parseSignature, stringToBytes, toHex, verifyTypedData, zeroHash, type Hex, type PrivateKeyAccount, type WalletClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
@@ -65,6 +65,7 @@ type Account = {
   key: string; iss: string; sub: string; continuity: Hex; mode: Mode;
   handle: string; root: string; wallet?: Hex; resolver?: Hex; limits: Record<string, number>;
   tokenHash?: string; tokenExp?: number; provisioned?: boolean; ready?: boolean;
+  permit?: Hex; txs?: Hex[]; // the user's one setup signature (USDC permit) and Hero's provisioning tx hashes
 };
 const DEFAULT_LIMITS = { Hobby: 1000, Needs: 3000 };
 const ACCOUNTS_FILE = stateFile(".accounts.json");
@@ -290,6 +291,8 @@ const SPENDER_ABI = parseAbi([
   "function buyApproved(Order o, uint64 authTime, bytes sig)",
   "function setContinuity(bytes32 c)",
   "function setAccount(bytes32 root, address resolver, address agent, uint256 human)",
+  "function setupDeadline(address owner, bytes32 root, address resolver, address agent, bytes32 continuity) view returns (uint256)",
+  "function setupWithPermit(address owner, bytes32 root, address resolver, address agent, bytes32 continuity, uint256 value, uint8 v, bytes32 r, bytes32 s)",
   "function accounts(address) view returns (bytes32 root, address resolver, address agent, uint256 human)",
   "function continuity(address) view returns (bytes32)",
   "function remaining(bytes categoryName, address owner) view returns (uint256)",
@@ -300,7 +303,7 @@ const SPENDER_ABI = parseAbi([
 ]);
 const ERC20 = parseAbi([
   "function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)",
-  "function approve(address,uint256) returns (bool)", "function mint(address,uint256)",
+  "function approve(address,uint256) returns (bool)", "function mint(address,uint256)", "function nonces(address) view returns (uint256)",
 ]);
 const AGENT = CHAIN.agentKey && privateKeyToAccount(CHAIN.agentKey).address;
 const OPERATOR = ENS.ownerKey && privateKeyToAccount(ENS.ownerKey).address;
@@ -364,8 +367,6 @@ async function send(key: Hex, address: Hex, abi: any, functionName: string, args
   const gas = await pub.estimateContractGas({ account: account.address, address, abi, functionName, args } as any);
   return broadcast(account, functionName, (w) => w.writeContract({ address, abi, functionName, args, gas: (gas * 12n) / 10n } as any));
 }
-const sendEth = (key: Hex, to: Hex, value: bigint) =>
-  broadcast(signer(key), "transfer", (w) => w.sendTransaction({ to, value, gas: 21_000n } as any));
 
 async function broadcast(account: PrivateKeyAccount, what: string, fn: (w: WalletClient) => Promise<Hex>): Promise<Hex> {
   const wallet = createWalletClient({ account, chain: sepolia, transport: http(CHAIN.rpc) });
@@ -422,8 +423,39 @@ const saltOf = (a: Account) => BigInt(keccak256(stringToBytes(`${a.wallet!.toLow
 const hasCode = async (x?: Hex) => !!x && !!(await pub.getCode({ address: x }));
 const walletChain = () => !!(CHAIN.rpc && CHAIN.spender && ENS.ownerKey && AGENT);
 
+// The user's only step is one gasless EIP-2612 permit on MockUSDC (OZ ERC20Permit "USDC", version "1"). Its deadline is
+// PolicySpender.setupDeadline(config), so the same signature also fixes the account config setupWithPermit() writes.
+const EIP712_DOMAIN = [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }];
+const PERMIT_TYPES = {
+  Permit: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }, { name: "value", type: "uint256" }, { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" }],
+} as const;
+const setupArgs = (a: Account) => [a.wallet!, namehash(a.root), a.resolver!, AGENT!, a.continuity] as const;
+/** Mirror of PolicySpender.setupDeadline (cross-checked against the contract at /connect). */
+const setupDeadline = (a: Account) => (1n << 255n) | (BigInt(keccak256(encodeAbiParameters(
+  parseAbiParameters("uint256, address, address, bytes32, address, address, bytes32"), [BigInt(sepolia.id), CHAIN.spender!, ...setupArgs(a)],
+))) >> 1n);
+/** Allowance = sum of the account's category limits. */
+const permitValue = (a: Account) => BigInt(Math.round(Object.values(a.limits).reduce((s, v) => s + v, 0) * 1e6));
+async function permitTypedData(a: Account) {
+  const nonce = await pub.readContract({ address: CHAIN.usdc, abi: ERC20, functionName: "nonces", args: [a.wallet!] });
+  return {
+    domain: { name: "USDC", version: "1", chainId: sepolia.id, verifyingContract: CHAIN.usdc },
+    types: PERMIT_TYPES, primaryType: "Permit" as const,
+    message: { owner: a.wallet!, spender: CHAIN.spender!, value: permitValue(a), nonce, deadline: setupDeadline(a) },
+  };
+}
+const same = (x: string, y?: string) => x.toLowerCase() === y?.toLowerCase();
+/** accounts(owner) and continuity(owner) on chain match what the user signed. */
+async function accountSet(a: Account) {
+  const [[root, resolver, agent], cont] = await Promise.all([
+    pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "accounts", args: [a.wallet!] }),
+    pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "continuity", args: [a.wallet!] }),
+  ]);
+  return root === namehash(a.root) && same(resolver, a.resolver) && same(agent, AGENT) && cont === a.continuity;
+}
+
 const provisioning = new Map<string, Promise<void>>();
-/** Idempotent (reads chain first): gas drip, demo MockUSDC, the user's resolver, <handle>.herodemo.eth -> user. */
+/** Idempotent (reads chain first): demo MockUSDC, the user's resolver, <handle>.herodemo.eth -> user, setupWithPermit. */
 function provision(a: Account): Promise<void> {
   let p = provisioning.get(a.key);
   if (!p) {
@@ -434,22 +466,28 @@ function provision(a: Account): Promise<void> {
 }
 async function doProvision(a: Account) {
   const key = ENS.ownerKey!, w = a.wallet!, res = a.resolver!;
-  const [eth, usdc, deployed, resolverOf] = await Promise.all([
-    pub.getBalance({ address: w }),
+  const [usdc, deployed, resolverOf, setUp] = await Promise.all([
     pub.readContract({ address: CHAIN.usdc, abi: ERC20, functionName: "balanceOf", args: [w] }),
     hasCode(res),
     pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
+    accountSet(a),
   ]);
-  // sent concurrently: the nonce manager orders them, the gas drip first
+  // all independent, sent concurrently from the operator key (the nonce manager orders them): ~one block for the user
   const txs: Promise<Hex>[] = [];
-  if (eth < parseEther("0.002")) txs.push(sendEth(key, w, parseEther("0.005")));
   if (usdc < 500_000000n) txs.push(send(key, CHAIN.usdc, ERC20, "mint", [w, 5000_000000n]));
   if (!deployed) txs.push(send(key, FACTORY, ENS_ABI, "deployProxy", [RES_IMPL, saltOf(a), resolverInit(w, a.root, a.limits, OPERATOR!, AGENT!)]));
   if (resolverOf.toLowerCase() !== res.toLowerCase()) {
     const exp = BigInt(Math.floor(Date.now() / 1000) + 365 * 86_400);
     txs.push(send(key, HERODEMO_REGISTRY, ENS_ABI, "register", [a.handle, w, ZERO, res, ALL_ROLES, exp]));
   }
-  const failed = (await Promise.allSettled(txs)).find((x) => x.status === "rejected");
+  if (!setUp && a.permit) {
+    const sig = a.permit, { r, s, yParity } = parseSignature(sig);
+    txs.push(send(key, CHAIN.spender!, SPENDER_ABI, "setupWithPermit", [...setupArgs(a), permitValue(a), 27 + yParity, r, s])
+      .catch((e) => { if (a.permit === sig) a.permit = undefined; throw e; })); // unusable (e.g. nonce consumed): the page asks for a new signature
+  }
+  a.txs = [];
+  const failed = (await Promise.allSettled(txs.map((p) => p.then((h) => void a.txs!.push(h))))).find((x) => x.status === "rejected");
+  saveAccounts();
   if (failed) throw (failed as PromiseRejectedResult).reason;
   // Hero must end up with no admin rights over the user's resolver
   const [f, o] = await Promise.all([FACTORY, OPERATOR!].map((x) => pub.readContract({ address: res, abi: ENS_ABI, functionName: "roles", args: [0n, x] })));
@@ -458,37 +496,21 @@ async function doProvision(a: Account) {
   saveAccounts();
 }
 
-/** The 3 transactions the user signs in MetaMask. */
-function walletCalls(a: Account) {
-  const total = Object.values(a.limits).reduce((s, v) => s + v, 0);
-  const call = (id: string, label: string, to: Hex, abi: any, functionName: string, args: any[]) => ({ id, label, to, data: encodeFunctionData({ abi, functionName, args }) });
-  return [
-    call("approve", `Let Hero's contract pull up to $${total.toLocaleString("en-US")} from this wallet, only as your rules allow`,
-      CHAIN.usdc, ERC20, "approve", [CHAIN.spender, BigInt(Math.round(total * 1e6))]),
-    call("account", `Your rules live at ${a.root}; agent ${AGENT!.slice(0, 6)}…${AGENT!.slice(-4)} may request buys`,
-      CHAIN.spender!, SPENDER_ABI, "setAccount", [namehash(a.root), a.resolver, AGENT, 0n]),
-    call("continuity", "Only your World ID can approve bigger buys", CHAIN.spender!, SPENDER_ABI, "setContinuity", [a.continuity]),
-  ];
-}
-
-type WalletState = { funded: boolean; done: { approve: boolean; account: boolean; continuity: boolean }; ready: boolean };
+type WalletState = { signed: boolean; done: { resolver: boolean; name: boolean; account: boolean }; ready: boolean };
 const stateCache = new Map<string, { at: number; p: Promise<WalletState> }>();
-/** Read from chain (cached 3 s): gas funded, which of the 3 user txs landed, and ready = all 3 + the resolver exists. */
+/** Read from chain (cached 3 s): which of Hero's setup steps landed; ready = resolver deployed + account/continuity set + allowance. */
 function walletState(a: Account): Promise<WalletState> {
   const hit = stateCache.get(a.key);
   if (hit && Date.now() - hit.at < 3000) return hit.p;
-  const w = a.wallet!, same = (x: string, y?: string) => x.toLowerCase() === y?.toLowerCase();
   const p = Promise.all([
-    pub.getBalance({ address: w }),
-    pub.readContract({ address: CHAIN.usdc, abi: ERC20, functionName: "allowance", args: [w, CHAIN.spender!] }),
-    pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "accounts", args: [w] }),
-    pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "continuity", args: [w] }),
+    pub.readContract({ address: CHAIN.usdc, abi: ERC20, functionName: "allowance", args: [a.wallet!, CHAIN.spender!] }),
+    accountSet(a),
     hasCode(a.resolver),
-  ]).then(([eth, allowance, [root, resolver, agent], cont, code]) => {
-    const done = { approve: allowance > 0n, account: root === namehash(a.root) && same(resolver, a.resolver) && same(agent, AGENT), continuity: cont === a.continuity };
-    const ready = done.approve && done.account && done.continuity && code;
+    pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
+  ]).then(([allowance, account, code, named]) => {
+    const ready = code && account && allowance > 0n;
     if (ready && !a.ready) { a.ready = true; saveAccounts(); } // sticky: an RPC blip never sends the user back to setup
-    return { funded: eth >= parseEther("0.002"), done, ready };
+    return { signed: !!a.permit || account, done: { resolver: code, name: same(named, a.resolver), account }, ready };
   });
   stateCache.set(a.key, { at: Date.now(), p });
   p.catch(() => stateCache.delete(a.key));
@@ -762,7 +784,7 @@ const HANDLE = /^[a-z0-9-]{3,24}$/;
 const RESERVED = ["hobby", "needs"];
 const badLimit = (v: unknown) => !(typeof v === "number" && v > 0 && v <= 1_000_000);
 /** Limits may change only until the user's resolver exists: they are written into its initializer. */
-const limitsOpen = async (a: Account) => !(a.provisioned || (a.mode === "wallet" && (await hasCode(a.resolver).catch(() => true))));
+const limitsOpen = async (a: Account) => !(a.provisioned || a.permit || (a.mode === "wallet" && (await hasCode(a.resolver).catch(() => true))));
 // ponytail: walletPage.ts is owned by the page agent; variable specifier so a missing file never breaks startup or tsc.
 const PAGE = "./walletPage.js";
 const walletPage = () => import(PAGE).then((m) => String(m.walletPageHtml), () => "<!doctype html><title>Hero</title><p>Wallet setup page is not deployed yet.</p>");
@@ -842,15 +864,46 @@ export function mountHero(app: Express, deps: Deps) {
     }
     a.mode = "wallet";
     saveAccounts();
+    try {
+      const td = await permitTypedData(a);
+      const onChain = await pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "setupDeadline", args: setupArgs(a) });
+      if (onChain !== td.message.deadline) throw new Error(`setupDeadline mismatch: contract ${onChain}, backend ${td.message.deadline}`);
+      const message = Object.fromEntries(Object.entries(td.message).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
+      // eth_signTypedData_v4 needs EIP712Domain spelled out (viem derives it from the domain)
+      res.json({ mode: "permit", typedData: { ...td, types: { EIP712Domain: EIP712_DOMAIN, ...td.types }, message }, ensName: a.root, chainId: "0xaa36a7" });
+    } catch (e: any) {
+      console.error("connect", e?.shortMessage ?? e?.message ?? e);
+      res.status(502).json({ error: "chain_unavailable" });
+    }
+  });
+  // The user's one signature: verified here against the current permit (nonce, config), then Hero sends every tx.
+  app.post("/w/:t/permit", async (req, res) => {
+    const a = byToken(req.params.t, true);
+    if (!a) return res.status(404).json({ error: "link_expired" });
+    if (!walletChain()) return res.status(503).json({ error: "chain_not_configured" });
+    if (!a.wallet || !a.resolver) return res.status(409).json({ error: "not_connected" });
+    const signature = String(req.body?.signature ?? "");
+    if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) return res.status(400).json({ error: "bad_signature" });
+    let td;
+    try {
+      td = await permitTypedData(a);
+    } catch (e: any) {
+      console.error("permit", e?.shortMessage ?? e?.message ?? e);
+      return res.status(502).json({ error: "chain_unavailable" });
+    }
+    if (!(await verifyTypedData({ address: a.wallet, ...td, signature: signature as Hex }).catch(() => false))) return res.status(400).json({ error: "bad_signature" });
+    a.permit = signature as Hex;
+    saveAccounts();
+    stateCache.delete(a.key);
     void provision(a);
-    res.json({ calls: walletCalls(a), ensName: a.root, chainId: "0xaa36a7" });
+    res.json({ ok: true, ensName: a.root });
   });
   app.get("/w/:t/status", async (req, res) => {
     const a = byToken(req.params.t);
     if (!a) return res.status(404).json({ error: "link_expired" });
-    const none = { funded: false, done: { approve: false, account: false, continuity: false }, ready: false };
+    const none = { signed: !!a.permit, done: { resolver: false, name: false, account: false }, ready: false };
     const s = a.wallet && walletChain() ? await walletState(a).catch(() => none) : none;
-    res.json({ ...s, ensName: a.root, address: a.wallet ?? "" });
+    res.json({ ...s, ensName: a.root, address: a.wallet ?? "", txs: a.txs ?? [] });
   });
 
   // Hero Demo Merchant's public order pages (receipt + timeline); no session.
@@ -1066,5 +1119,5 @@ export function mountHero(app: Express, deps: Deps) {
   });
 
   // restart mid-provisioning: finish what was persisted (every step reads chain first)
-  if (walletChain()) for (const a of accounts.values()) if (a.mode === "wallet" && a.resolver && !a.provisioned) void provision(a);
+  if (walletChain()) for (const a of accounts.values()) if (a.mode === "wallet" && a.resolver && a.permit && !a.provisioned) void provision(a);
 }
