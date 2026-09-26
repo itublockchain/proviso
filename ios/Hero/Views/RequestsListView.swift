@@ -11,40 +11,46 @@ struct RequestsListView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if store.isLoading && store.requests.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if filtered.isEmpty {
-                    ContentUnavailableView(
-                        "No requests yet",
-                        systemImage: "cart",
-                        description: Text("Tap + to tell Hero what to buy.")
-                    )
-                } else {
-                    List {
-                        ForEach(filtered) { request in
-                            // Hidden link: whole card is tappable, no disclosure chevron.
-                            RequestRow(request: request)
-                                .background(NavigationLink(value: request.id) { EmptyView() }.opacity(0))
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Theme.background)
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    // ponytail: local-only removal, real delete needs a backend endpoint.
-                                    store.requests.removeAll { $0.id == request.id }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
+            VStack(spacing: 0) {
+                if !store.requests.isEmpty {
+                    RequestsSummaryHeader(requests: store.requests, spentThisMonth: spentThisMonth)
+                    HairlineDivider()
+                }
+                Group {
+                    if store.isLoading && store.requests.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if filtered.isEmpty {
+                        ContentUnavailableView(
+                            "No requests yet",
+                            systemImage: "cart",
+                            description: Text("Tap + to tell Hero what to buy.")
+                        )
+                    } else {
+                        List {
+                            ForEach(filtered) { request in
+                                // Hidden link: whole row is tappable, no disclosure chevron.
+                                RequestRow(request: request)
+                                    .background(NavigationLink(value: request.id) { EmptyView() }.opacity(0))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                                .listRowSeparatorTint(Theme.border)
+                                .listRowBackground(Theme.background)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        // ponytail: local-only removal, real delete needs a backend endpoint.
+                                        store.requests.removeAll { $0.id == request.id }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                                .contextMenu {
+                                    Button("View strategy", systemImage: "sparkles") {}
                                 }
                             }
-                            .contextMenu {
-                                Button("View strategy", systemImage: "sparkles") {}
-                            }
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
                 }
             }
             .background(Theme.background)
@@ -58,74 +64,77 @@ struct RequestsListView: View {
             .refreshable { await store.loadAll() }
         }
     }
+
+    private var spentThisMonth: Double {
+        store.budgets?.categories.reduce(0) { $0 + $1.spentUsd } ?? 0
+    }
+}
+
+/// Quiet stat strip above the list — total watching, needs approval, spent this month.
+private struct RequestsSummaryHeader: View {
+    let requests: [HeroRequest]
+    let spentThisMonth: Double
+
+    private var watching: Int { requests.filter { $0.status == .watching }.count }
+    private var needsApproval: Int { requests.filter { $0.status == .needsApproval }.count }
+
+    var body: some View {
+        HStack(spacing: Theme.spacingL) {
+            stat("Watching", "\(watching)")
+            stat("Needs approval", "\(needsApproval)", color: needsApproval > 0 ? Theme.accentAmber : Theme.textPrimary)
+            stat("Spent this month", spentThisMonth.usd)
+            Spacer()
+        }
+        .padding(.horizontal, Theme.spacingM)
+        .padding(.vertical, Theme.spacingS)
+    }
+
+    private func stat(_ label: String, _ value: String, color: Color = Theme.textPrimary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(color)
+            Text(label).font(.caption2).foregroundStyle(Theme.textSecondary)
+        }
+    }
 }
 
 private struct RequestRow: View {
     let request: HeroRequest
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ProductThumbnail(imageUrl: request.imageUrl, category: request.category)
+        HStack(alignment: .center, spacing: 12) {
+            ProductThumbnail(imageUrl: request.imageUrl, category: request.category, size: 44)
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top) {
-                    Text(request.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    Spacer()
-                    StatusPill(status: request.status)
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(request.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                StatusDot(color: request.status.color, label: statusText)
+            }
 
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(request.currentPrice.usd)
-                        .font(.subheadline.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    if let target = request.targetPrice, request.status != .bought {
-                        Text("target \(target.usd)")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                }
+            Spacer()
 
-                if let secondary = secondaryLine {
-                    Text(secondary)
-                        .font(.caption)
-                        .foregroundStyle(secondaryColor)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(request.currentPrice.usd)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                if let target = request.targetPrice, request.status != .bought {
+                    Text("target \(target.usd)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
                 }
             }
         }
-        .padding(12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)
-                .strokeBorder(Theme.border, lineWidth: 1)
-        )
     }
 
-    private var daysLeft: Int {
-        Calendar.current.dateComponents([.day], from: Date(), to: request.deadline).day ?? 0
-    }
-
-    /// A single line of supporting context beneath the price — never repeats the status pill.
-    private var secondaryLine: String? {
+    private var statusText: String {
         switch request.status {
         case .bought:
             return "Bought \((request.boughtAt ?? request.deadline).formatted(date: .abbreviated, time: .omitted))"
-        case .expired:
-            return "Deadline \(request.deadline.formatted(date: .abbreviated, time: .omitted))"
-        case .watching, .readyToBuy, .needsApproval:
-            return daysLeft >= 0 ? "\(daysLeft)d left" : "\(-daysLeft)d overdue"
-        }
-    }
-
-    private var secondaryColor: Color {
-        switch request.status {
-        case .bought: return Theme.textSecondary
-        case .expired: return Theme.accentRed
-        default: return daysLeft <= 5 ? Theme.accentAmber : Theme.textSecondary
+        default:
+            return request.status.label
         }
     }
 }
