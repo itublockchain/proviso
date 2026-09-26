@@ -233,7 +233,7 @@ private struct PriceChartIllustration: View {
     let appeared: Bool
     @State private var progress: CGFloat = 0
     @State private var showMarker = false
-    private let points: [CGFloat] = [0.8, 0.7, 0.75, 0.5, 0.2, 0.35, 0.6]
+    private let points: [CGFloat] = [0.8, 0.7, 0.75, 0.5, 0.2, 0.35, 0.6] // price, 0 = cheapest (drawn low)
     private let dipIndex = 4
 
     var body: some View {
@@ -244,7 +244,7 @@ private struct PriceChartIllustration: View {
                 ZStack(alignment: .topLeading) {
                     Path { path in
                         for (i, p) in points.enumerated() {
-                            let pt = CGPoint(x: step * CGFloat(i), y: h * p)
+                            let pt = CGPoint(x: step * CGFloat(i), y: h * (1 - p)) // SwiftUI y grows downward
                             if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
                         }
                     }
@@ -256,7 +256,7 @@ private struct PriceChartIllustration: View {
                             Text("Buy here").font(.caption2.weight(.bold)).foregroundStyle(Theme.accentGreen)
                             Circle().fill(Theme.accentGreen).frame(width: 8, height: 8)
                         }
-                        .position(x: step * CGFloat(dipIndex), y: max(h * points[dipIndex] - 14, 14))
+                        .position(x: step * CGFloat(dipIndex), y: h * (1 - points[dipIndex]) - 14)
                         .transition(.scale.combined(with: .opacity))
                     }
                 }
