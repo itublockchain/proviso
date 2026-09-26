@@ -15,7 +15,8 @@ struct ApprovalsListView: View {
         NavigationStack(path: $store.approvalsPath) {
             VStack(spacing: 0) {
                 if store.budgets?.wallet.worldLinked != true {
-                    WorldIDNudgeCard()
+                    WorldIDNudgeBanner()
+                    HairlineDivider()
                 }
                 Group {
                     if store.approvals.isEmpty {
@@ -32,8 +33,8 @@ struct ApprovalsListView: View {
                                         NavigationLink(value: approval.orderId) {
                                             ApprovalRow(approval: approval)
                                         }
-                                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                        .listRowSeparator(.hidden)
+                                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                                        .listRowSeparatorTint(Theme.border)
                                         .listRowBackground(Theme.background)
                                     }
                                 }
@@ -44,8 +45,8 @@ struct ApprovalsListView: View {
                                         NavigationLink(value: approval.orderId) {
                                             ApprovalRow(approval: approval)
                                         }
-                                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                        .listRowSeparator(.hidden)
+                                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                                        .listRowSeparatorTint(Theme.border)
                                         .listRowBackground(Theme.background)
                                     }
                                 }
@@ -69,18 +70,19 @@ struct ApprovalsListView: View {
 }
 
 /// Reminder shown when the agent isn't linked to World ID yet — approvals can't be confirmed without it.
-private struct WorldIDNudgeCard: View {
+/// A quiet banner, not a boxed card: the World ID surface itself only appears once there's an
+/// actual code to confirm.
+private struct WorldIDNudgeBanner: View {
     var body: some View {
-        HeroCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Link World ID so the agent can ask you for approval on important purchases.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-                WorldIDLinkRow(worldLinked: false)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Link World ID so the agent can ask you for approval on important purchases.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            WorldIDLinkRow(worldLinked: false)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
+        .padding(.horizontal, Theme.spacingM)
+        .padding(.vertical, Theme.spacingM)
+        .background(Theme.secondaryBackground)
     }
 }
 
@@ -89,30 +91,18 @@ private struct ApprovalRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ProductThumbnail(imageUrl: approval.imageUrl, category: "")
+            ProductThumbnail(imageUrl: approval.imageUrl, category: "", size: 44)
             VStack(alignment: .leading, spacing: 4) {
-                Text(approval.title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary)
+                Text(approval.title).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(approval.merchant).font(.caption).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Text(approval.price.usd).font(.subheadline.monospacedDigit().weight(.semibold)).foregroundStyle(Theme.textPrimary)
-                statusLabel
+                StatusDot(color: color, label: approval.status.rawValue.capitalized)
             }
         }
-        .padding(12)
-        .background(Theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)
-                .strokeBorder(Theme.border, lineWidth: 1)
-        )
-    }
-
-    private var statusLabel: some View {
-        Text(approval.status.rawValue.capitalized)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(color)
+        .padding(.vertical, 10)
     }
 
     private var color: Color {

@@ -13,10 +13,10 @@ struct ApprovalDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
-                orderCard
+            VStack(alignment: .leading, spacing: Theme.spacingXL) {
+                orderHeader
                 if approval.status == .pending {
-                    reasonCard
+                    reasonText
                     if let code = approval.userCode {
                         WorldIDCodeCard(code: code)
                     }
@@ -68,30 +68,35 @@ struct ApprovalDetailView: View {
         }
     }
 
-    private var orderCard: some View {
-        HeroCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(approval.title).font(.title3.bold()).foregroundStyle(Theme.textPrimary)
-                Text(approval.merchant).font(.subheadline).foregroundStyle(Theme.textSecondary)
-                Divider().overlay(Theme.border)
-                row("Price", approval.price.usd)
+    private var orderHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(approval.title).font(.title2.bold()).foregroundStyle(Theme.textPrimary)
+            Text(approval.merchant).font(.subheadline).foregroundStyle(Theme.textSecondary)
+            Text(approval.price.usd)
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.top, 4)
+            VStack(spacing: 0) {
+                HairlineDivider()
                 row("Pay to", shortAddress(approval.payTo))
+                HairlineDivider()
                 row("Order hash", shortHash(approval.orderHash))
+                HairlineDivider()
                 row("Expires", approval.expiresAt.formatted(date: .abbreviated, time: .shortened))
+                HairlineDivider()
             }
         }
     }
 
-    private var reasonCard: some View {
-        HeroCard {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Why approval is needed", systemImage: "exclamationmark.triangle")
-                    .font(.headline)
-                    .foregroundStyle(Theme.accentAmber)
-                Text("\(approval.price.usd) is above your \(approval.autoUsd.usd) auto-buy limit, but within your \(approval.maxUsd.usd) max. Approve with World ID to let the agent complete this exact order.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-            }
+    private var reasonText: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Why approval is needed", systemImage: "exclamationmark.triangle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.accentAmber)
+            Text("\(approval.price.usd) is above your \(approval.autoUsd.usd) auto-buy limit, but within your \(approval.maxUsd.usd) max. Approve with World ID to let the agent complete this exact order.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 
@@ -185,6 +190,7 @@ struct ApprovalDetailView: View {
             Spacer()
             Text(value).font(.footnote.monospaced()).foregroundStyle(Theme.textPrimary)
         }
+        .padding(.vertical, 9)
     }
 
     private func startApproval() {
