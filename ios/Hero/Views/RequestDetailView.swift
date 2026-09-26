@@ -166,29 +166,30 @@ private struct DetailHeroImage: View {
 
     var body: some View {
         let icon = category.categoryIcon
-        ZStack {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(icon.tint.opacity(0.12))
-            if let imageUrl, let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        Image(systemName: icon.symbol)
-                            .font(.system(size: 52))
-                            .foregroundStyle(icon.tint)
+        // The fill image lives in an overlay so its natural width can never widen the page.
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(icon.tint.opacity(0.12))
+            .frame(maxWidth: .infinity)
+            .frame(height: 220)
+            .overlay {
+                if let imageUrl, let url = URL(string: imageUrl) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFill()
+                        default:
+                            Image(systemName: icon.symbol)
+                                .font(.system(size: 52))
+                                .foregroundStyle(icon.tint)
+                        }
                     }
+                } else {
+                    Image(systemName: icon.symbol)
+                        .font(.system(size: 52))
+                        .foregroundStyle(icon.tint)
                 }
-            } else {
-                Image(systemName: icon.symbol)
-                    .font(.system(size: 52))
-                    .foregroundStyle(icon.tint)
             }
-        }
-        .frame(height: 220)
-        .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
 
