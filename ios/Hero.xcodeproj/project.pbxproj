@@ -11,6 +11,7 @@
 		261C84054DE90F3B3A6F9500 /* ApprovalDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 621EB3F7EE29C00394D482DC /* ApprovalDetailView.swift */; };
 		316701519448BA603D3799A3 /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E7924FE11FF97F83166184F /* API.swift */; };
 		34A67D9232F79D4029E1CA0C /* ApprovalsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D40E15FAE69E2050AC428F7 /* ApprovalsListView.swift */; };
+		37DC45F65722BE5C5713ED95 /* WorldID.swift in Sources */ = {isa = PBXBuildFile; fileRef = E64E1536E7EA6A302C26ABB7 /* WorldID.swift */; };
 		643FE9F534015C0EB5A2AC6F /* HeroApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAA9AC6FDBFCE9DC5E2DCAFD /* HeroApp.swift */; };
 		8670D658C0C92CEFD07E5D93 /* BudgetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E320662BC3A6A8194483FB02 /* BudgetsView.swift */; };
 		911AC0091255C189781DC8B9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9507F8AB50C10AFE18A8C640 /* Assets.xcassets */; };
@@ -40,6 +41,7 @@
 		CAA9AC6FDBFCE9DC5E2DCAFD /* HeroApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroApp.swift; sourceTree = "<group>"; };
 		D13E94CB6E1CCA2C0765BF31 /* Hero.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Hero.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E320662BC3A6A8194483FB02 /* BudgetsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetsView.swift; sourceTree = "<group>"; };
+		E64E1536E7EA6A302C26ABB7 /* WorldID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorldID.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -53,6 +55,7 @@
 				B26C3F41EF476347DB9AF2F5 /* RequestDetailView.swift */,
 				9DC7D820B62C4558B7D2427C /* RequestsListView.swift */,
 				A05DEFA500E44BABB3B5A161 /* SettingsView.swift */,
+				E64E1536E7EA6A302C26ABB7 /* WorldID.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -173,6 +176,7 @@
 				CDE80E43F955E013BDB57EB0 /* SettingsView.swift in Sources */,
 				0060C6E9ED3AE3A0945C59C6 /* Store.swift in Sources */,
 				D9276798B5AE711C116B1BE9 /* Theme.swift in Sources */,
+				37DC45F65722BE5C5713ED95 /* WorldID.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -8,6 +8,7 @@ struct ApprovalDetailView: View {
     @State private var pollTask: Task<Void, Never>?
     @State private var approveTapped = false
     @State private var showQR = false
+    @State private var showSafari = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -16,6 +17,9 @@ struct ApprovalDetailView: View {
                 orderCard
                 if approval.status == .pending {
                     reasonCard
+                    if let code = approval.userCode {
+                        WorldIDCodeCard(code: code)
+                    }
                     approveButton
                 } else if approval.status == .approved {
                     HeroCard {
@@ -35,6 +39,9 @@ struct ApprovalDetailView: View {
                                   systemImage: "xmark.shield.fill")
                                 .font(.headline)
                                 .foregroundStyle(Theme.accentRed)
+                            Text("Nothing was bought.")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Theme.textPrimary)
                             Text(approval.denyReason ?? "The contract did not accept this order.")
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.textSecondary)
@@ -92,9 +99,15 @@ struct ApprovalDetailView: View {
         VStack(spacing: 16) {
             Button {
                 approveTapped.toggle()
-                openWorldApp()
+                startApproval()
+                if approval.userCode != nil {
+                    showSafari = true
+                } else {
+                    openWorldApp()
+                }
             } label: {
-                Label("Approve in World App", systemImage: "person.fill.checkmark")
+                Label(approval.userCode != nil ? "Confirm with World ID" : "Approve in World App",
+                      systemImage: "person.fill.checkmark")
                     .frame(maxWidth: .infinity)
                     .fontWeight(.semibold)
                     .padding(.vertical, 6)
@@ -120,8 +133,8 @@ struct ApprovalDetailView: View {
                         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
                 }
 
-                if let url = URL(string: "https://simulator.worldcoin.org") {
-                    Link("Open in World ID Simulator", destination: url)
+                if let url = URL(string: approval.userCode != nil ? approval.approvalUrl : "https://simulator.worldcoin.org") {
+                    Link(approval.userCode != nil ? "Open verification page" : "Open in World ID Simulator", destination: url)
                         .font(.footnote)
                 }
 
@@ -133,12 +146,14 @@ struct ApprovalDetailView: View {
                 .font(.footnote)
             }
         }
+        .sheet(isPresented: $showSafari) {
+            if let url = URL(string: approval.approvalUrl) { SafariView(url: url) }
+        }
     }
 
     /// Opens the IDKit connector URL only if World App claims it as a universal link;
     /// otherwise (no World App / host not associated, e.g. simulator) falls back to the QR.
     private func openWorldApp() {
-        startApproval()
         guard let url = URL(string: approval.approvalUrl) else {
             withAnimation { showQR = true }
             return
@@ -181,6 +196,7 @@ struct ApprovalDetailView: View {
                 await store.refreshApproval(orderId: approval.orderId)
                 if let updated = store.approval(id: approval.orderId) {
                     approval = updated
+                    if updated.status != .pending { showSafari = false }
                     if updated.status == .paid || updated.status == .denied || updated.status == .expired {
                         break
                     }
