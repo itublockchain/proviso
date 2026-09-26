@@ -137,7 +137,9 @@ struct SettingsView: View {
             HairlineDivider()
             settingsRow("Kind", store.walletStatus == .demo ? "Demo wallet (held by Hero)" : "Your wallet")
             HairlineDivider()
-            settingsRow("ENS name", wallet.ensRoot)
+            Link(destination: URL(string: "https://explorer.ens.dev/\(wallet.ensRoot)") ?? URL(string: "https://explorer.ens.dev")!) {
+                settingsRow("ENS name", wallet.ensRoot)
+            }
             HairlineDivider()
             settingsRow("Address", wallet.address.shortAddress, monospaced: true)
             HairlineDivider()

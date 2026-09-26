@@ -617,9 +617,14 @@ private struct PolicySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.spacingS) {
             SectionHeader(title: "ENS Policy")
-            Text(request.ensName)
-                .font(.subheadline.monospaced())
-                .foregroundStyle(Theme.textPrimary)
+            Link(destination: URL(string: "https://explorer.ens.dev/\(request.ensName)") ?? URL(string: "https://explorer.ens.dev")!) {
+                HStack(spacing: 4) {
+                    Text(request.ensName)
+                        .font(.subheadline.monospaced())
+                        .foregroundStyle(Theme.textPrimary)
+                    Image(systemName: "arrow.up.right").font(.caption2)
+                }
+            }
             VStack(spacing: 0) {
                 policyRow("Category", request.category)
                 HairlineDivider()
