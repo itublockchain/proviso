@@ -13,3 +13,4 @@ contracts/deployments/setup.json
 ios/build/
 ios/build-device/
 ios/**/xcuserdata/
+.wrangler/
