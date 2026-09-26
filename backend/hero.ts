@@ -21,7 +21,10 @@ type Deps = {
 const DAY = 86_400_000;
 const PERIOD = 30 * DAY; // matches PolicySpender.PERIOD
 const SHIPPING_DAYS = 7;
-const ROOT = process.env.ENS_ROOT ?? "alice.eth";
+// ENS: [item].[category].[username].<ROOT>. The shared demo wallet is one more username under the root.
+const ROOT = process.env.ENS_ROOT ?? "proviso.eth";
+const DEMO_HANDLE = process.env.ENS_DEMO_HANDLE ?? "alice";
+const DEMO_ROOT = `${DEMO_HANDLE}.${ROOT}`;
 const iso = (t: number) => new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z"); // iOS .iso8601 rejects millis
 const usd = (n: number) => `$${n.toFixed(0)}`;
 
@@ -75,6 +78,10 @@ const DEFAULT_LIMITS = { Hobby: 1000, Needs: 3000 };
 const ACCOUNTS_FILE = stateFile(".accounts.json");
 const accounts = new Map<string, Account>(Object.entries(load(ACCOUNTS_FILE) ?? {}));
 const saveAccounts = () => writeFileSync(ACCOUNTS_FILE, JSON.stringify(Object.fromEntries(accounts)), { mode: 0o600 });
+for (const a of accounts.values()) if (!a.root.endsWith(`.${ROOT}`)) { // set up under an older root: one new signature under ROOT
+  if (a.mode === "wallet") Object.assign(a, { mode: "none", wallet: undefined, resolver: undefined, permit: undefined, txs: undefined, provisioned: undefined, ready: undefined, setupNonce: undefined });
+  a.root = `${a.handle}.${ROOT}`;
+}
 
 // Sign in with World ID sessions: opaque bearer tokens, only their sha256 is stored. Any World ID may sign in.
 type Session = { iss: string; sub: string; createdAt: number; authTime: number; acr?: string };
@@ -135,9 +142,10 @@ export function saveState() {
 export function loadState() {
   requests.clear(); approvals.clear(); orders.clear();
   const s = load(STATE_FILE);
-  for (const r of s?.requests ?? []) requests.set(r.id, r);
+  for (const r of s?.requests ?? []) if (r.ensName.endsWith(`.${ROOT}`)) requests.set(r.id, r); // older roots can't be bought any more
   for (const o of s?.orders ?? []) orders.set(o.id, o);
   for (const a of s?.approvals ?? []) {
+    if (!requests.has(a.requestId)) continue;
     a.order = { ...a.order, price: BigInt(a.order.price), expiry: BigInt(a.order.expiry) };
     if (a.status === "pending" || a.status === "approved") { // its World ID attempt was not persisted: expire it
       a.status = "expired"; a.closed = true;
@@ -275,13 +283,13 @@ const CHAIN = {
   agentKey: isKey(process.env.AGENT_PRIVATE_KEY),
 };
 const ENS = {
-  ownerKey: isKey(process.env.DEPLOYER_PRIVATE_KEY), // Hero operator = alice: owns herodemo.eth and the demo wallet's policy tree
+  ownerKey: isKey(process.env.DEPLOYER_PRIVATE_KEY), // operator = the demo wallet (alice): owns the root and the demo policy tree
   resolver: process.env.ALICE_RESOLVER as Hex | undefined,
 };
-// ENSv2 on Sepolia: VerifiableFactory, PermissionedResolver implementation, herodemo.eth's registry (owned by the operator).
+// ENSv2 on Sepolia: VerifiableFactory, PermissionedResolver implementation, the root's registry (owned by the operator).
 const FACTORY = "0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C" as Hex;
 const RES_IMPL = "0x14F09Fd05d4585759e54844DC9B00147131Cf243" as Hex;
-const HERODEMO_REGISTRY = "0x9817e00c0ac5478c60D7Bd0A6E55aee939d11aFa" as Hex;
+const ROOT_REGISTRY = (process.env.ENS_ROOT_REGISTRY ?? "0x7B64a7118017572b38f7c880e13AeBA508cF98c1") as Hex; // proviso.eth's registry
 const USERREG_IMPL = "0xA80338aAA8D23831cEa25E858D1774534aBb0263" as Hex; // ENSv2 UserRegistry implementation
 const ENS_ABI = parseAbi([
   "function register(string label, address owner, address subregistry, address resolver, uint256 roles, uint64 expiry) returns (uint256)",
@@ -344,7 +352,7 @@ function dnsEncode(name: string): Hex {
 /** The request's owner context: a wallet account's own wallet + resolver, else the Hero-held demo wallet. */
 function ctxOf(a?: Account): Ctx {
   if (a?.mode === "wallet") return { acct: a.key, demo: false, payer: a.wallet, root: a.root, resolver: a.resolver, continuity: a.continuity };
-  return { acct: a?.key, demo: true, payer: CHAIN.payer, root: ROOT, resolver: ENS.resolver, continuity: a?.continuity };
+  return { acct: a?.key, demo: true, payer: CHAIN.payer, root: DEMO_ROOT, resolver: ENS.resolver, continuity: a?.continuity };
 }
 const limitOf = (c: Ctx, category: string) => (c.demo ? categories.get(category)?.limitUsd : accounts.get(c.acct!)?.limits[category]) ?? 0;
 
@@ -443,9 +451,9 @@ async function writeTexts(r: Req) {
 }
 
 const getSub = (reg: Hex, label: string) => pub.readContract({ address: reg, abi: ENS_ABI, functionName: "getSubregistry", args: [label] });
-/** Registry holding <category>.<root>'s children, walked from herodemo.eth ([<handle> ->] <category>); ZERO if the tree is missing. */
+/** Registry holding <category>.<username>.<ROOT>'s children, walked from the root's registry; ZERO if the tree is missing. */
 async function categoryRegistry(r: Req): Promise<Hex> {
-  let reg = HERODEMO_REGISTRY;
+  let reg = ROOT_REGISTRY;
   for (const l of r.ensName.slice(0, -ROOT.length - 1).split(".").slice(1).reverse()) if (reg !== ZERO) reg = await getSub(reg, l);
   return reg;
 }
@@ -461,7 +469,7 @@ async function registerRequest(r: Req): Promise<Hex | undefined> {
   return send(ENS.ownerKey, reg, ENS_ABI, "register", [r.ensName.split(".")[0], r.ctx.payer, ZERO, r.ctx.resolver, ALL_ROLES, expiry]);
 }
 
-/** Per-user tree so request names can be registered: <handle>.herodemo.eth -> a registry holding hobby/needs, each with its own
+/** Per-user tree so request names can be registered: <handle>.<ROOT> -> a registry holding hobby/needs, each with its own
  *  registry (UserRegistry proxies, user + operator admins). Two blocks (deploys, then links), sent after onboarding, never on its
  *  path. Idempotent: reads chain first; random salts, so a half-built tree is finished with fresh registries. */
 const trees = new Map<string, Promise<void>>();
@@ -479,14 +487,14 @@ async function buildTree(a: Account) {
     await send(key, FACTORY, ENS_ABI, "deployProxy", [...args]);
     return result;
   };
-  const old = await getSub(HERODEMO_REGISTRY, a.handle);
+  const old = await getSub(ROOT_REGISTRY, a.handle);
   const subs = old === ZERO ? cats.map(() => ZERO) : await Promise.all(cats.map((c) => getSub(old, c)));
   const [top, ...regs] = await Promise.all([old === ZERO ? deploy() : old, ...subs.map((x) => (x === ZERO ? deploy() : x))]);
   const exp = BigInt(Math.floor(Date.now() / 1000) + 365 * 86_400);
   await Promise.all([
     ...(old === ZERO ? [
-      send(key, HERODEMO_REGISTRY, ENS_ABI, "setSubregistry", [BigInt(keccak256(stringToBytes(a.handle))), top]),
-      send(key, top, ENS_ABI, "setParent", [HERODEMO_REGISTRY, a.handle]),
+      send(key, ROOT_REGISTRY, ENS_ABI, "setSubregistry", [BigInt(keccak256(stringToBytes(a.handle))), top]),
+      send(key, top, ENS_ABI, "setParent", [ROOT_REGISTRY, a.handle]),
     ] : []),
     ...cats.flatMap((c, i) => (subs[i] !== ZERO ? [] : [
       send(key, top, ENS_ABI, "register", [c, w, regs[i], a.resolver!, ALL_ROLES, exp]),
@@ -563,7 +571,7 @@ async function accountSet(a: Account) {
 }
 
 const provisioning = new Map<string, Promise<void>>();
-/** Idempotent (reads chain first): demo MockUSDC, the user's resolver, <handle>.herodemo.eth -> user, setupWithPermit. */
+/** Idempotent (reads chain first): demo MockUSDC, the user's resolver, <handle>.<ROOT> -> user, setupWithPermit. */
 function provision(a: Account): Promise<void> {
   let p = provisioning.get(a.key);
   if (!p) {
@@ -577,7 +585,7 @@ async function doProvision(a: Account) {
   const [usdc, deployed, resolverOf, setUp] = await Promise.all([
     pub.readContract({ address: CHAIN.usdc, abi: ERC20, functionName: "balanceOf", args: [w] }),
     hasCode(res),
-    pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
+    pub.readContract({ address: ROOT_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
     accountSet(a),
   ]);
   // all independent, sent concurrently from the operator key (the nonce manager orders them): ~one block for the user
@@ -586,7 +594,7 @@ async function doProvision(a: Account) {
   if (!deployed) txs.push(send(key, FACTORY, ENS_ABI, "deployProxy", [RES_IMPL, saltOf(a), resolverInit(w, a.root, a.limits, OPERATOR!, AGENT!)]));
   if (resolverOf.toLowerCase() !== res.toLowerCase()) {
     const exp = BigInt(Math.floor(Date.now() / 1000) + 365 * 86_400);
-    txs.push(send(key, HERODEMO_REGISTRY, ENS_ABI, "register", [a.handle, w, ZERO, res, ALL_ROLES, exp]));
+    txs.push(send(key, ROOT_REGISTRY, ENS_ABI, "register", [a.handle, w, ZERO, res, ALL_ROLES, exp]));
   }
   if (!setUp && a.permit) {
     const sig = a.permit, { r, s, yParity } = parseSignature(sig);
@@ -615,7 +623,7 @@ function walletState(a: Account): Promise<WalletState> {
     pub.readContract({ address: CHAIN.usdc, abi: ERC20, functionName: "allowance", args: [a.wallet!, CHAIN.spender!] }),
     accountSet(a),
     hasCode(a.resolver),
-    pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
+    pub.readContract({ address: ROOT_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
   ]).then(([allowance, account, code, named]) => {
     const ready = code && account && allowance > 0n;
     if (ready && !a.ready) { a.ready = true; saveAccounts(); } // sticky: an RPC blip never sends the user back to setup
@@ -897,7 +905,7 @@ const acctOf = (res: Response): Account | undefined => res.locals.acct;
 const mine = (res: Response, r?: Req) => (r && r.acct === acctOf(res)?.key ? r : undefined);
 const periodEnds = () => iso((Math.floor(Date.now() / PERIOD) + 1) * PERIOD);
 const HANDLE = /^[a-z0-9-]{3,24}$/;
-const RESERVED = ["hobby", "needs"];
+const RESERVED = ["hobby", "needs", DEMO_HANDLE];
 const badLimit = (v: unknown) => !(typeof v === "number" && v > 0 && v <= 1_000_000);
 /** Limits may change only until the user's resolver exists: they are written into its initializer. */
 const limitsOpen = async (a: Account) => !(a.provisioned || a.permit || (a.mode === "wallet" && (await hasCode(a.resolver).catch(() => true))));
@@ -909,7 +917,7 @@ const walletPage = () => import(PAGE).then((m) => String(m.walletPageHtml), () =
 
 export type ResetResult = { handle: string; wallet?: Hex; chain: boolean; ens: string | null; requests: number; orders: number; txs: Hex[] };
 
-/** Operator key: PolicySpender.resetFor(wallet) if the row on chain is this account's, and unregister <handle>.herodemo.eth if it
+/** Operator key: PolicySpender.resetFor(wallet) if the row on chain is this account's, and unregister <handle>.<ROOT> if it
  *  still points at this account's resolver (so the same handle can be registered again); then the account's requests, approvals,
  *  orders, sessions and row are deleted. The next setup gets a fresh resolver (new setupNonce). The shared demo wallet is never
  *  reset on chain. A failed tx aborts before anything is deleted; a retry skips what already happened. */
@@ -921,12 +929,12 @@ export async function resetAccount(a: Account): Promise<ResetResult> {
   if (w && !same(w, CHAIN.payer) && walletChain()) {
     const [[root], named] = await Promise.all([
       pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "accounts", args: [w] }),
-      pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
+      pub.readContract({ address: ROOT_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
     ]);
     const key = ENS.ownerKey!;
     await Promise.all([
       root === namehash(a.root) && send(key, CHAIN.spender!, SPENDER_ABI, "resetFor", [w]).then((h) => { out.chain = true; out.txs.push(h); }),
-      a.resolver && same(named, a.resolver) && send(key, HERODEMO_REGISTRY, ENS_ABI, "unregister", [BigInt(keccak256(stringToBytes(a.handle)))])
+      a.resolver && same(named, a.resolver) && send(key, ROOT_REGISTRY, ENS_ABI, "unregister", [BigInt(keccak256(stringToBytes(a.handle)))])
         .then((h) => { out.ens = a.root; out.txs.push(h); }),
     ]);
   }
@@ -1043,11 +1051,11 @@ export function mountHero(app: Express, deps: Deps) {
     if (a.wallet && a.wallet !== addr) return res.status(409).json({ error: "wallet_mismatch", wallet: a.wallet });
     if (!a.wallet) {
       try {
-        // free label: not claimed by another account, not registered under herodemo.eth; else a 4-hex suffix
+        // free label: not claimed by another account, not registered under the root; else a 4-hex suffix
         let h = a.handle;
         for (let i = 0; ; i++) {
           const taken = [...accounts.values()].some((x) => x !== a && x.wallet && x.handle === h)
-            || (await pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [h] })) !== ZERO;
+            || (await pub.readContract({ address: ROOT_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [h] })) !== ZERO;
           if (!taken) break;
           if (i === 5) return res.status(409).json({ error: "handle_taken" });
           h = `${a.handle.slice(0, 19)}-${randomBytes(2).toString("hex")}`;
@@ -1323,13 +1331,13 @@ export function mountHero(app: Express, deps: Deps) {
     c.pct = req.body?.pct ?? undefined;
     if (ENS.ownerKey && ENS.resolver) {
       // one record update re-caps every request in this category
-      const node = dnsEncode(`${name.toLowerCase()}.${ROOT}`);
+      const node = dnsEncode(`${name.toLowerCase()}.${DEMO_ROOT}`);
       const calls = ([["limit", Math.round(c.limitUsd * 1e6)], ["pct", c.pct ?? 0]] as const)
         .map(([k, v]) => encodeFunctionData({ abi: ENS_ABI, functionName: "setData", args: [node, k, u256(v)] }))
-        .concat(setTexts(`${name.toLowerCase()}.${ROOT}`, categoryTexts(name, c.limitUsd))); // alice's resolver: the operator is its admin
+        .concat(setTexts(`${name.toLowerCase()}.${DEMO_ROOT}`, categoryTexts(name, c.limitUsd))); // alice's resolver: the operator is its admin
       await send(ENS.ownerKey, ENS.resolver, ENS_ABI, "multicall", [calls]).catch((e) => console.error("limit write", e?.shortMessage ?? e));
     }
-    res.json({ name, ensName: `${name.toLowerCase()}.${ROOT}`, limitUsd: c.limitUsd, spentUsd: spentThisPeriod(ctxOf(a), name), pct: c.pct, periodEnds: periodEnds() });
+    res.json({ name, ensName: `${name.toLowerCase()}.${DEMO_ROOT}`, limitUsd: c.limitUsd, spentUsd: spentThisPeriod(ctxOf(a), name), pct: c.pct, periodEnds: periodEnds() });
   });
 
   // restart mid-provisioning: finish what was persisted (every step reads chain first)

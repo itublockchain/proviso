@@ -339,10 +339,10 @@ for (const handle of ["Bad Handle", "hobby", "ab", 7]) assert.equal((await post(
 assert.equal((await post("/api/wallet/start", mallory, { limits: { toString: 5 } })).status, 400);
 const ws = await (await post("/api/wallet/start", mallory, { handle: "mallory" })).json();
 const tok = new URL(ws.pageUrl).pathname.split("/").pop();
-assert.deepEqual(ws, { url: `https://link.metamask.io/dapp/hero.test/w/${tok}`, pageUrl: `https://hero.test/w/${tok}`, ensName: "mallory.alice.eth" });
+assert.deepEqual(ws, { url: `https://link.metamask.io/dapp/hero.test/w/${tok}`, pageUrl: `https://hero.test/w/${tok}`, ensName: "mallory.proviso.eth" });
 assert.match((await get(`/w/${tok}`)).headers.get("content-type")!, /^text\/html/);
 assert.deepEqual(await (await get(`/w/${tok}/status`)).json(),
-  { signed: false, done: { resolver: false, name: false, account: false }, ready: false, ensName: "mallory.alice.eth", address: "", txs: [] });
+  { signed: false, done: { resolver: false, name: false, account: false }, ready: false, ensName: "mallory.proviso.eth", address: "", txs: [] });
 assert.equal((await get("/w/not-a-token/status")).status, 404);
 assert.equal((await post(`/w/${tok}/connect`, undefined, { address: "0x0000000000000000000000000000000000000001" })).status, 503); // no chain here
 assert.equal((await post(`/w/${tok}/permit`, undefined, { signature: "0x" + "11".repeat(65) })).status, 503);

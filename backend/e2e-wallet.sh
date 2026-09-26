@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 RPC=http://127.0.0.1:8551 API=http://127.0.0.1:8791 STATE=${STATE:-/tmp/hero-e2e}
 SPENDER=0x1F478b128b388486a20785b107Af7daD769685B8 USDC=0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e
-FACTORY=0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C REGISTRY=0x9817e00c0ac5478c60D7Bd0A6E55aee939d11aFa
+FACTORY=0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C REGISTRY=0x7B64a7118017572b38f7c880e13AeBA508cF98c1
 OP=0x73B30b7150D6cFf3EC35EF25a65E4b8625Cf4435 AGENT=0x79bbB630E4Ba04651cF8642697085E7b1f0AD823 MERCHANT=0xB4c42772dAeE7E4251bE9dc4782387C9881e6371
 ALL=0x1111111111111111111111111111111111111111111111111111111111111111
 
@@ -60,6 +60,7 @@ echo "user wallet $U (fresh, fork only)"
 eq "$(api $TA GET /api/me | jq -r .walletStatus)" none "new account starts with walletStatus none"
 eq "$(code $TA PUT /api/budgets/Hobby -d '{"limitUsd":1500}')" 200 "onboarding budget stored before the resolver exists"
 HANDLE=e2e$(openssl rand -hex 3)
+eq "$(code $TA POST /api/wallet/start -d '{"handle":"alice"}')" 400 "the demo username alice is reserved"
 START=$(api $TA POST /api/wallet/start -d "{\"handle\":\"$HANDLE\"}")
 T=$(echo "$START" | jq -r .pageUrl | sed 's#.*/w/##')
 echo "$START" | jq -r .url | grep -q "^https://link.metamask.io/dapp/.*/w/$T$" || fail "metamask deeplink"
@@ -67,7 +68,7 @@ eq "$(curl -s -o /dev/null -w '%{content_type}' $API/w/$T)" "text/html; charset=
 
 CONNECT=$(curl -sS -X POST -H 'content-type: application/json' $API/w/$T/connect -d "{\"address\":\"$U\"}")
 ROOT=$(echo "$CONNECT" | jq -r .ensName)
-eq "$ROOT" "$HANDLE.herodemo.eth" "connect -> ensName"
+eq "$ROOT" "$HANDLE.proviso.eth" "connect -> ensName"
 eq "$(echo "$CONNECT" | jq -r .mode)" permit "connect -> one permit to sign"
 eq "$(echo "$CONNECT" | jq -r .chainId)" 0xaa36a7 "connect -> chainId"
 TD=$(echo "$CONNECT" | jq -c .typedData)
@@ -94,7 +95,7 @@ eq "$(api $TA GET /api/me | jq -r .walletStatus)" ready "/api/me walletStatus re
 eq "$(api $TA GET /api/me | jq -r .wallet)" "$U" "/api/me wallet = user"
 eq "$(c call $USDC 'allowance(address,address)(uint256)' $U $SPENDER | awk '{print $1}')" 4500000000 "permit allowance = sum of limits (1500 + 3000)"
 for _ in $(seq 30); do [ "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE | tr A-F a-f)" = "$(echo $RES | tr A-F a-f)" ] && break; sleep 2; done
-eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" "$RES" "$HANDLE.herodemo.eth -> user's resolver"
+eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" "$RES" "$HANDLE.proviso.eth -> user's resolver"
 eq "$(num $RES 'roles(uint256,address)(uint256)' 0 $FACTORY)" 0 "factory holds no root roles"
 eq "$(num $RES 'roles(uint256,address)(uint256)' 0 $OP)" 0 "operator holds no root roles"
 eq "$(c call $RES 'roles(uint256,address)(uint256)' 0 $U | awk '{print $1}' | xargs cast to-hex)" 0x1111111111111111111111111111111111111111111111111111111111111111 "user holds all root roles"
@@ -154,13 +155,13 @@ for _ in $(seq 30); do [ "$(c call $SPENDER 'continuity(address)(bytes32)' $OP)"
 eq "$(c call $SPENDER 'continuity(address)(bytes32)' $OP)" "$CB" "demo selection sets alice's continuity to this World ID (new contract)"
 A0=$(num $USDC 'balanceOf(address)(uint256)' $OP)
 REQB=$(api $TB POST /api/requests -d "{\"title\":\"E2E zzqx gadget\",\"query\":\"zzqx e2e gadget\",\"category\":\"Hobby\",\"autoUsd\":100,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}")
-eq "$(echo "$REQB" | jq -r .ensName | cut -d. -f2-)" hobby.herodemo.eth "demo request under herodemo.eth"
+eq "$(echo "$REQB" | jq -r .ensName | cut -d. -f2-)" hobby.alice.proviso.eth "demo request under the demo username: <item>.hobby.alice.proviso.eth"
 [ "$(echo "$REQB" | jq -r .status)" = bought ] || REQB=$(api $TB POST /api/requests/$(echo "$REQB" | jq -r .id)/price -d '{"price":70}')
 eq "$(echo "$REQB" | jq -r .status)" bought "demo wallet auto-band buy"
 eq "$(num $USDC 'balanceOf(address)(uint256)' $OP)" "$((A0 - 70000000))" "demo buy paid from alice's wallet"
 eq "$(api $TA GET /api/requests | jq --arg id "$(echo "$REQB" | jq -r .id)" '[.[]|select(.id==$id)]|length')" 0 "first account can't see the demo account's request"
-LB=$(echo "$REQB" | jq -r .ensName | cut -d. -f1) HOBBYREG=$(c call $REGISTRY 'getSubregistry(string)(address)' hobby)
-eq "$(num $HOBBYREG 'findExpiry(string)(uint64)' $LB)" "$(node -e 'console.log(Math.floor(Date.parse(process.argv[1])/1000))' "$DEADLINE")" "demo request name registered under hobby.herodemo.eth, expiry = deadline"
+LB=$(echo "$REQB" | jq -r .ensName | cut -d. -f1) HOBBYREG=$(c call $(c call $REGISTRY 'getSubregistry(string)(address)' alice) 'getSubregistry(string)(address)' hobby)
+eq "$(num $HOBBYREG 'findExpiry(string)(uint64)' $LB)" "$(node -e 'console.log(Math.floor(Date.parse(process.argv[1])/1000))' "$DEADLINE")" "demo request name registered under hobby.alice.proviso.eth, expiry = deadline"
 until_text "$(echo "$REQB" | jq -r .ensName)" auto "100 USDC"
 
 # --- "Reset & start over": the same wallet + World ID + handle from zero ---
@@ -170,7 +171,7 @@ echo "    reset txs: $(echo "$RESET" | jq -r '.reset.txs | join(" ")')"
 eq "$(code $TA GET /api/me)" 401 "the session ends with the reset"
 eq "$(c call $SPENDER 'accounts(address)(bytes32,address,address,uint256)' $U | sed -n 3p)" 0x0000000000000000000000000000000000000000 "account row wiped on chain (no agent)"
 eq "$(num $SPENDER 'epoch(address)(uint256)' $U)" 1 "epoch 1"
-eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" 0x0000000000000000000000000000000000000000 "$HANDLE.herodemo.eth unregistered"
+eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" 0x0000000000000000000000000000000000000000 "$HANDLE.proviso.eth unregistered"
 eq "$(c call $REGISTRY 'getSubregistry(string)(address)' $HANDLE)" $ZERO "its request tree is unreachable"
 eq "$(text "$NAME" max)" "" "old request name no longer resolves"
 eq "$(api $TB GET /api/me | jq -r .walletStatus)" demo "other accounts untouched"
@@ -188,7 +189,7 @@ until_json $API/w/$T/status '.ready and .done.resolver and .done.name and .done.
 RES2=$(c call $SPENDER "accounts(address)(bytes32,address,address,uint256)" $U | sed -n 2p)
 [ "$(echo $RES2 | tr A-F a-f)" != "$(echo $RES | tr A-F a-f)" ] && echo "ok  fresh resolver $RES2 (old $RES)" || fail "resolver reused"
 for _ in $(seq 30); do [ "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE | tr A-F a-f)" = "$(echo $RES2 | tr A-F a-f)" ] && break; sleep 2; done
-eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" "$RES2" "$HANDLE.herodemo.eth -> the new resolver"
+eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" "$RES2" "$HANDLE.proviso.eth -> the new resolver"
 eq "$(num $SPENDER 'spentOf(address,bytes)(uint256)' $U $HOBBY)" 0 "spend counter back to 0 in the same period"
 eq "$(num $SPENDER 'remaining(bytes,address)(uint256)' $HOBBY $U)" 1500000000 "full hobby budget again"
 REQ=$(api $TA POST /api/requests -d "{\"title\":\"E2E zzqx widget again\",\"query\":\"zzqx e2e widget\",\"category\":\"Hobby\",\"autoUsd\":100,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}")
