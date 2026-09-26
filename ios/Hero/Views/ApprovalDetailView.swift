@@ -8,7 +8,7 @@ struct ApprovalDetailView: View {
     @State private var pollTask: Task<Void, Never>?
     @State private var approveTapped = false
     @State private var showQR = false
-    @State private var showSafari = false
+    @State private var worldPage = WorldApprovalPage()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -105,8 +105,8 @@ struct ApprovalDetailView: View {
             Button {
                 approveTapped.toggle()
                 startApproval()
-                if approval.userCode != nil {
-                    showSafari = true
+                if approval.userCode != nil, let url = URL(string: approval.approvalUrl) {
+                    worldPage.open(url)
                 } else {
                     openWorldApp()
                 }
@@ -150,9 +150,6 @@ struct ApprovalDetailView: View {
                 }
                 .font(.footnote)
             }
-        }
-        .sheet(isPresented: $showSafari) {
-            if let url = URL(string: approval.approvalUrl) { SafariView(url: url) }
         }
     }
 
@@ -202,7 +199,7 @@ struct ApprovalDetailView: View {
                 await store.refreshApproval(orderId: approval.orderId)
                 if let updated = store.approval(id: approval.orderId) {
                     approval = updated
-                    if updated.status != .pending { showSafari = false }
+                    if updated.status != .pending { worldPage.close() }
                     if updated.status == .paid || updated.status == .denied || updated.status == .expired {
                         break
                     }

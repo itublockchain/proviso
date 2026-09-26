@@ -80,3 +80,32 @@ final class WorldSignInController: NSObject, ASWebAuthenticationPresentationCont
         return ASPresentationAnchor()
     }
 }
+
+/// Shows a World ID for Agents approval page in the same browser context as sign-in.
+/// The sandbox keeps its (fake) World ID in that browser's storage, so an SFSafariViewController
+/// — which has its own cookie jar — would approve as a different person than the one who signed in.
+/// The page never calls back; the view closes it once polling sees the approval resolve.
+@MainActor
+final class WorldApprovalPage: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private var session: ASWebAuthenticationSession?
+
+    func open(_ url: URL) {
+        session?.cancel()
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "hero") { _, _ in }
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = false
+        self.session = session
+        session.start()
+    }
+
+    func close() {
+        session?.cancel()
+        session = nil
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.windows.first(where: \.isKeyWindow) }
+            .first ?? ASPresentationAnchor()
+    }
+}
