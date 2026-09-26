@@ -428,10 +428,10 @@ const policyTxs = new Map<string, Promise<void>>();
 /** Human-readable mirror of the policy for ENS tools (text only; the contract reads the `data` records). */
 export const policyTexts = (autoUsd: number, maxUsd: number, deadline: string) => ({
   auto: `${autoUsd} USDC`, max: `${maxUsd} USDC`, deadline: deadline.slice(0, 10),
-  description: `Hero policy: buys on its own up to ${usd(autoUsd)}, asks the owner up to ${usd(maxUsd)}, until ${deadline.slice(0, 10)}`,
+  description: `Proviso policy: buys on its own up to ${usd(autoUsd)}, asks the owner up to ${usd(maxUsd)}, until ${deadline.slice(0, 10)}`,
 });
 const categoryTexts = (category: string, limitUsd: number) => ({
-  limit: `${limitUsd} USDC`, description: `Hero category: ${category}, the agent may spend up to ${usd(limitUsd)} per 30 days`,
+  limit: `${limitUsd} USDC`, description: `Proviso category: ${category}, the agent may spend up to ${usd(limitUsd)} per 30 days`,
 });
 const setTexts = (name: string, texts: Record<string, string>) =>
   Object.entries(texts).map(([k, v]) => encodeFunctionData({ abi: ENS_ABI, functionName: "setText", args: [dnsEncode(name), k, v] }));
@@ -599,7 +599,7 @@ async function doProvision(a: Account) {
   if (failed) throw (failed as PromiseRejectedResult).reason;
   // Hero must end up with no admin rights over the user's resolver
   const [f, o] = await Promise.all([FACTORY, OPERATOR!].map((x) => pub.readContract({ address: res, abi: ENS_ABI, functionName: "roles", args: [0n, x] })));
-  if (f !== 0n || o !== 0n) throw new Error(`resolver ${res}: Hero holds root roles (factory ${f}, operator ${o})`);
+  if (f !== 0n || o !== 0n) throw new Error(`resolver ${res}: Proviso holds root roles (factory ${f}, operator ${o})`);
   a.provisioned = true;
   saveAccounts();
   void tree(a).catch((e) => console.error("tree", a.root, e?.shortMessage ?? e?.message ?? e)); // for request names, off the onboarding path
@@ -654,9 +654,9 @@ function markBought(r: Req, price: number, txHash?: string, human = false) {
   r.activity.push({ date: iso(Date.now()), text: `Bought for ${usd(price)}${human ? " with your World ID approval" : " (auto band)"}${txHash ? "" : " (demo, no chain)"}`, txHash });
 }
 
-// ---------- Hero Demo Merchant: simulated fulfilment with a real, signed receipt ----------
+// ---------- Proviso Demo Merchant: simulated fulfilment with a real, signed receipt ----------
 
-const MERCHANT_NAME = "Hero Demo Merchant";
+const MERCHANT_NAME = "Proviso Demo Merchant";
 const merchantKey = isKey(process.env.MERCHANT_PRIVATE_KEY);
 const MERCHANT = merchantKey && privateKeyToAccount(merchantKey);
 const merchantMismatch = !!MERCHANT && !isAddressEqual(MERCHANT.address, CHAIN.merchant);
@@ -903,7 +903,7 @@ const badLimit = (v: unknown) => !(typeof v === "number" && v > 0 && v <= 1_000_
 const limitsOpen = async (a: Account) => !(a.provisioned || a.permit || (a.mode === "wallet" && (await hasCode(a.resolver).catch(() => true))));
 // ponytail: walletPage.ts is owned by the page agent; variable specifier so a missing file never breaks startup or tsc.
 const PAGE = "./walletPage.js";
-const walletPage = () => import(PAGE).then((m) => String(m.walletPageHtml), () => "<!doctype html><title>Hero</title><p>Wallet setup page is not deployed yet.</p>");
+const walletPage = () => import(PAGE).then((m) => String(m.walletPageHtml), () => "<!doctype html><title>Proviso</title><p>Wallet setup page is not deployed yet.</p>");
 
 // ---------- start over (testnet): the same wallet + World ID from zero ----------
 
@@ -1108,7 +1108,7 @@ export function mountHero(app: Express, deps: Deps) {
     res.json({ ...s, ensName: a.root, address: a.wallet ?? "", txs: a.txs ?? [] });
   });
 
-  // Hero Demo Merchant's public order pages (receipt + timeline); no session.
+  // Proviso Demo Merchant's public order pages (receipt + timeline); no session.
   app.get("/merchant/orders", (_req, res) => res.json([...orders.values()].slice(-20).reverse().map(orderView)));
   app.get("/merchant/orders/:id", (req, res) => {
     const o = orders.get(req.params.id);

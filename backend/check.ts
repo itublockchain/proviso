@@ -280,23 +280,23 @@ assert.equal(last(dr.body).blocked, true);
 dr = await demo("auto");
 assert.equal(dr.body.status, "bought");
 assert.ok(dr.body.currentPrice <= 100);
-// Hero Demo Merchant: a simulated order with a real EIP-712 receipt signed by the merchant key
+// Proviso Demo Merchant: a simulated order with a real EIP-712 receipt signed by the merchant key
 const ord = dr.body.order;
 assert.match(ord.id, /^HD-[0-9A-F]{8}$/);
 assert.deepEqual([ord.status, ord.simulated, ord.merchantName, ord.registry, ord.merchantVerified, ord.humanApproved, ord.priceUsd, ord.txHash],
-  ["paid", true, "Hero Demo Merchant", "hero-verified.eth", false, false, dr.body.currentPrice, undefined]); // no chain: nothing verified, no tx
+  ["paid", true, "Proviso Demo Merchant", "hero-verified.eth", false, false, dr.body.currentPrice, undefined]); // no chain: nothing verified, no tx
 assert.equal(ord.merchantAddress, MERCHANT);
 assert.equal(ord.id, `HD-${ord.orderHash.slice(2, 10).toUpperCase()}`);
 assert.match(ord.paidAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/); // iso, no millis
 assert.deepEqual(ord.timeline.map((t: any) => [t.status, t.done]), [["paid", true], ["confirmed", false], ["shipped", false], ["delivered", false]]);
 const td = ord.typedData;
-assert.deepEqual(td.domain, { name: "Hero Demo Merchant", version: "1", chainId: 11155111 });
+assert.deepEqual(td.domain, { name: "Proviso Demo Merchant", version: "1", chainId: 11155111 });
 assert.equal(td.message.amount, String(Math.round(ord.priceUsd * 1e6))); // bigints travel as strings
 const signed = { ...td, message: { ...td.message, amount: BigInt(td.message.amount), paidAt: BigInt(td.message.paidAt) }, signature: ord.signature };
 assert.ok(await verifyTypedData({ address: MERCHANT, ...signed }));
 assert.equal(await recoverTypedDataAddress(signed), MERCHANT);
 assert.equal(await verifyTypedData({ address: MERCHANT, ...signed, message: { ...signed.message, amount: 1n } }), false); // tampered amount
-assert.equal(last(dr.body).text, `Order ${ord.id} confirmed by Hero Demo Merchant (simulated fulfilment)`);
+assert.equal(last(dr.body).text, `Order ${ord.id} confirmed by Proviso Demo Merchant (simulated fulfilment)`);
 assert.equal(dr.body.activity.filter((a: any) => a.text.startsWith("Bought")).length, 1); // e2e-wallet.sh parses this line
 assert.deepEqual(await (await get(`/merchant/orders/${ord.id}`)).json(), ord); // public, no session
 assert.equal((await (await get("/merchant/orders")).json())[0].id, ord.id);

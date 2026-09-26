@@ -84,7 +84,7 @@ T0=$(date +%s)
 eq "$(curl -sS -X POST -H 'content-type: application/json' $API/w/$T/permit -d "{\"signature\":\"$SIG\"}" | jq -r .ok)" true "POST /w/<t>/permit accepted (verified locally)"
 eq "$(curl -s $API/w/$T/status | jq -r .signed)" true "status signed"
 until_json $API/w/$T/status '.ready and .done.resolver and .done.name and .done.account' "status ready (resolver, name, setupWithPermit)"
-echo "    ready after $(( $(date +%s) - T0 ))s; Hero's txs: $(curl -s $API/w/$T/status | jq -r '.txs | join(" ")')"
+echo "    ready after $(( $(date +%s) - T0 ))s; Proviso's txs: $(curl -s $API/w/$T/status | jq -r '.txs | join(" ")')"
 eq "$(c nonce $U)" 0 "the user sent no transaction"
 eq "$(c balance $U)" 0 "the user needed no ETH"
 eq "$(num $USDC 'nonces(address)(uint256)' $U)" 1 "permit nonce consumed"
@@ -127,7 +127,7 @@ CAT=$(c call $TOP 'getSubregistry(string)(address)' hobby 2>/dev/null || echo $Z
 eq "$(c call $CAT 'findOwner(string)(address)' $LABEL)" "$U" "request name registered, owned by the user"
 eq "$(c call $CAT 'getResolver(string)(address)' $LABEL)" "$RES" "request name resolver = the user's"
 eq "$(num $CAT 'findExpiry(string)(uint64)' $LABEL)" "$(node -e 'console.log(Math.floor(Date.parse(process.argv[1])/1000))' "$DEADLINE")" "request name expiry = deadline"
-until_text "$NAME" description "Hero policy: buys on its own up to \$100, asks the owner up to \$200, until ${DEADLINE:0:10}"
+until_text "$NAME" description "Proviso policy: buys on its own up to \$100, asks the owner up to \$200, until ${DEADLINE:0:10}"
 eq "$(text "$NAME" max)" "200 USDC" "UR text max"
 eq "$(text "hobby.$ROOT" limit)" "1500 USDC" "UR text limit on the category (resolver initializer)"
 
