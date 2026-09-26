@@ -20,50 +20,91 @@ struct NewRequestComposerView: View {
     @State private var isSending = false
     @State private var errorMessage: String?
 
+    @State private var isSubmitting = false
+    @State private var submitStep = 0
+    private static let submitSteps = ["Comparing stores…", "Reading the price history…", "Writing your rules to ENS…", "Almost there…"]
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(messages) { message in
-                                ChatBubble(message: message)
-                                    .id(message.id)
-                            }
-                            if isSending {
-                                ProgressView().padding(.leading, 4)
-                            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(messages) { message in
+                            ChatBubble(message: message)
+                                .id(message.id)
                         }
-                        .padding(16)
+                        if isSending {
+                            ProgressView().padding(.leading, 4)
+                        }
+                        if draft != nil {
+                            DraftCard(draft: Binding(get: { draft! }, set: { draft = $0 }))
+                                .disabled(isSubmitting)
+                                .opacity(isSubmitting ? 0.6 : 1)
+                                .id("draft")
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
-                    .onChange(of: messages.count) {
-                        if let last = messages.last {
-                            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                        }
+                    .padding(16)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: messages.count) {
+                    if let last = messages.last {
+                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
-
-                if let draft {
-                    DraftForm(draft: Binding(get: { draft }, set: { self.draft = $0 }), onConfirm: confirm)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                .onChange(of: draft != nil) { _, shown in
+                    if shown { withAnimation { proxy.scrollTo("draft", anchor: .bottom) } }
                 }
-
             }
-            .safeAreaInset(edge: .bottom) { if draft == nil { inputBar } } // the draft form owns the bottom edge once shown
+            .safeAreaInset(edge: .bottom) {
+                if draft == nil { inputBar } else { confirmBar }
+            }
             .background(Theme.background)
             .navigationTitle("New Request")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { dismiss() }.disabled(isSubmitting)
                 }
             }
+            .interactiveDismissDisabled(isSubmitting)
             .alert("Something went wrong", isPresented: .constant(errorMessage != nil), actions: {
                 Button("OK") { errorMessage = nil }
             }, message: {
                 Text(errorMessage ?? "")
             })
         }
+    }
+
+    /// One primary action, pinned above the home indicator. Locks immediately so a slow backend can't be double-submitted.
+    private var confirmBar: some View {
+        VStack(spacing: 8) {
+            Button(action: confirm) {
+                HStack(spacing: 10) {
+                    if isSubmitting { ProgressView().tint(.white) }
+                    Text(isSubmitting ? Self.submitSteps[submitStep] : "Save rules & start watching")
+                        .fontWeight(.semibold)
+                        .contentTransition(.opacity)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(Theme.accentBlue)
+            .disabled(isSubmitting)
+            .animation(.easeInOut(duration: 0.25), value: submitStep)
+            .sensoryFeedback(.impact(weight: .medium), trigger: isSubmitting) { _, new in new }
+
+            Text(isSubmitting ? "Hero is checking every store and signing your rules. This takes a few seconds."
+                              : "Your rules are saved on your ENS name. Above your max, Hero simply can't pay.")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(Theme.background.opacity(0.92))
     }
 
     /// Liquid Glass capsule like Messages/Slack: text grows up to 5 lines, send appears as a prominent glass button.
@@ -121,13 +162,24 @@ struct NewRequestComposerView: View {
     }
 
     private func confirm() {
-        guard let draft else { return }
+        guard let draft, !isSubmitting else { return }
+        inputFocused = false
+        isSubmitting = true
+        submitStep = 0
+        let ticker = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(4))
+                if submitStep < Self.submitSteps.count - 1 { submitStep += 1 }
+            }
+        }
         Task {
+            defer { ticker.cancel() }
             do {
                 try await store.submitDraft(draft)
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription
+                isSubmitting = false
             }
         }
     }
@@ -151,49 +203,80 @@ private struct ChatBubble: View {
     }
 }
 
-/// Editable draft form shown after the agent proposes a parsed request.
-private struct DraftForm: View {
+/// The agent's parsed draft, shown in the conversation as the rules the user is about to sign off.
+private struct DraftCard: View {
     @Binding var draft: RequestDraft
-    let onConfirm: () -> Void
-    @State private var confirmed = false
 
     var body: some View {
-        Form {
-            Section("Draft policy") {
-                TextField("Title", text: $draft.title)
-                TextField("Category", text: $draft.category)
-                HStack {
-                    Text("Auto-buy under")
-                    Spacer()
-                    TextField("Auto", value: $draft.autoUsd, format: .currency(code: "USD"))
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 100)
-                }
-                HStack {
-                    Text("Never above")
-                    Spacer()
-                    TextField("Max", value: $draft.maxUsd, format: .currency(code: "USD"))
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 100)
-                }
-                DatePicker("Deadline", selection: $draft.deadline, displayedComponents: .date)
+        VStack(alignment: .leading, spacing: 16) {
+            SectionHeader(title: "Your rules")
+
+            TextField("What should Hero buy?", text: $draft.title, axis: .vertical)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+
+            Picker("Category", selection: $draft.category) {
+                Text("Hobby").tag("Hobby")
+                Text("Needs").tag("Needs")
             }
-            Section {
-                Button {
-                    confirmed.toggle()
-                    onConfirm()
-                } label: {
-                    Text("Write policy to ENS")
-                        .frame(maxWidth: .infinity)
-                        .fontWeight(.semibold)
+            .pickerStyle(.segmented)
+
+            PolicyStrip(auto: draft.autoUsd, max: draft.maxUsd)
+
+            VStack(spacing: 0) {
+                amountRow("Buys on its own up to", value: $draft.autoUsd, tint: Theme.accentGreen)
+                HairlineDivider()
+                amountRow("Asks you up to", value: $draft.maxUsd, tint: Theme.accentAmber)
+                HairlineDivider()
+                HStack {
+                    Image(systemName: "calendar").foregroundStyle(Theme.textSecondary).frame(width: 16)
+                    Text("Arrives by").foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    DatePicker("", selection: $draft.deadline, in: Date()..., displayedComponents: .date)
+                        .labelsHidden()
                 }
-                .sensoryFeedback(.success, trigger: confirmed)
+                .padding(.vertical, 10)
+            }
+            .font(.subheadline)
+        }
+        .padding(Theme.cardPadding)
+        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func amountRow(_ label: String, value: Binding<Double>, tint: Color) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(tint).frame(width: 8, height: 8).frame(width: 16)
+            Text(label).foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Text("$").foregroundStyle(Theme.textSecondary)
+            TextField("0", value: value, format: .number.precision(.fractionLength(0)))
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .fontWeight(.semibold)
+                .frame(width: 72)
+        }
+        .padding(.vertical, 10)
+    }
+}
+
+/// Auto | ask | never, drawn to scale so the bands read at a glance.
+private struct PolicyStrip: View {
+    let auto: Double
+    let max: Double
+
+    var body: some View {
+        let top = Swift.max(max * 1.2, 1)
+        GeometryReader { geo in
+            let w = geo.size.width
+            HStack(spacing: 3) {
+                Capsule().fill(Theme.accentGreen).frame(width: Swift.max(8, w * auto / top))
+                Capsule().fill(Theme.accentAmber).frame(width: Swift.max(8, w * (max - auto) / top))
+                Capsule().fill(Theme.border)
             }
         }
-        .scrollContentBackground(.hidden)
-        .background(Theme.background)
-        .frame(height: 340)
+        .frame(height: 6)
+        .animation(.spring(duration: 0.3), value: auto)
+        .animation(.spring(duration: 0.3), value: max)
     }
 }

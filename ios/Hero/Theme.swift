@@ -79,6 +79,24 @@ struct HairlineDivider: View {
     }
 }
 
+/// Brief bottom banner for one-off confirmations (e.g. "Reset & start over" summary) — plain
+/// text over a dark pill, no dismiss button, the caller auto-clears it after a few seconds.
+struct ToastBanner: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, Theme.spacingL)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+}
+
 /// Compact colored dot + label used for status in list rows — replaces heavy pills there.
 struct StatusDot: View {
     let color: Color
@@ -133,6 +151,7 @@ extension Double {
     var usd: String {
         let f = NumberFormatter()
         f.numberStyle = .currency
+        f.locale = Locale(identifier: "en_US") // "$240", not "US$ 240" on non-US regions
         f.currencyCode = "USD"
         f.maximumFractionDigits = 0
         return f.string(from: NSNumber(value: self)) ?? "$\(Int(self))"
