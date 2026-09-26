@@ -53,15 +53,20 @@ const categories = new Map<string, { limitUsd: number; pct?: number }>([
 
 // ---------- parsing (Claude if a key is set, else a small heuristic) ----------
 
+/** Claude on Amazon Bedrock (API key auth); returns undefined when not configured so callers fall back to heuristics. */
 async function claudeJson<T>(prompt: string): Promise<T | undefined> {
-  if (!process.env.ANTHROPIC_API_KEY) return;
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  const key = process.env.AWS_BEARER_TOKEN_BEDROCK;
+  if (!key) return;
+  const region = process.env.AWS_REGION ?? "eu-central-1";
+  const model = process.env.BEDROCK_MODEL_ID ?? "eu.anthropic.claude-haiku-4-5-20251001-v1:0";
+  const r = await fetch(`https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(model)}/invoke`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 800, messages: [{ role: "user", content: prompt }] }),
-  });
-  if (!r.ok) return;
-  const text: string = (await r.json()).content?.[0]?.text ?? "";
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+    body: JSON.stringify({ anthropic_version: "bedrock-2023-05-31", max_tokens: 1024, messages: [{ role: "user", content: prompt }] }),
+  }).catch((e) => void console.error("bedrock", e));
+  if (!r) return;
+  if (!r.ok) return void console.error("bedrock", r.status, (await r.text()).slice(0, 200));
+  const text: string = (await r.json()).content?.find((c: any) => c.type === "text")?.text ?? "";
   try { return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch { return; }
 }
 
