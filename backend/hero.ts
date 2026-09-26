@@ -1,11 +1,13 @@
 // Hero API for the iOS app: requests -> time-aware strategy -> ENS policy bands -> auto-buy or World-approved buy.
 import type { Express } from "express";
 import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import {
   createPublicClient, createWalletClient, encodeAbiParameters, encodeFunctionData, http, keccak256, parseAbi, stringToBytes, toHex, type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
+import { approvalTypedData, oidcEnabled, pollDevice, startDevice, type Device } from "./worldid.js";
 
 type Offer = { sku: string; title: string; merchant: string; priceMinor: number; image?: string };
 type Deps = {
@@ -42,7 +44,15 @@ type Req = Draft & {
 type Approval = {
   id: string; requestId: string; cartHash: Hex; order: any; price: number; status: "pending" | "approved" | "denied" | "expired" | "paid";
   expiresAt: number; txHash?: string; world?: any; connectorURI?: string; proof?: any; denyReason?: string; returnTo?: string; buying?: boolean;
+  device?: Device; userCode?: string; authTime?: number; // World ID for Agents (OIDC device grant) approvals
+  closed?: boolean; // denial/expiry already applied to the request
 };
+
+// The owner's linked World ID for Agents subject: "the human who authorized this agent". Kept on disk so a restart keeps it.
+type Owner = { iss: string; sub: string; continuity: Hex; linkedAt: number };
+const OWNER_FILE = new URL("./.world-owner.json", import.meta.url);
+let owner: Owner | undefined = (() => { try { return JSON.parse(readFileSync(OWNER_FILE, "utf8")); } catch { return undefined; } })();
+const links = new Map<string, { device: Device; status: "pending" | "linked" | "denied" | "expired"; error?: string; txHash?: Hex }>();
 
 const requests = new Map<string, Req>();
 const approvals = new Map<string, Approval>();
@@ -178,9 +188,11 @@ const SPENDER_ABI = parseAbi([
   "struct Order { address payer; bytes request; address payTo; uint256 price; bytes32 sku; uint64 expiry; bytes32 salt; }",
   "struct Human { uint256 root; uint256 nullifier; uint256[8] proof; }",
   "function buy(Order o, Human h)",
+  "function buyApproved(Order o, uint64 authTime, bytes sig)",
+  "function setContinuity(bytes32 c)",
   "function remaining(bytes categoryName, address owner) view returns (uint256)",
   "error NotAgent()", "error OrderUsed()", "error Expired()", "error NotYourPolicy()", "error OverMax()",
-  "error OverBudget()", "error UnverifiedMerchant()", "error NotOwnerHuman()", "error ProofInvalid()",
+  "error OverBudget()", "error UnverifiedMerchant()", "error NotOwnerHuman()", "error ProofInvalid()", "error StaleApproval()", "error BadApproval()",
 ]);
 const ERC20 = parseAbi(["function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)"]);
 
@@ -209,6 +221,18 @@ async function sendBuy(order: ReturnType<typeof makeOrder>, proof?: any): Promis
     ? { root: BigInt(proof.merkle_root), nullifier: BigInt(proof.nullifier), proof: Array.from({ length: 8 }, (_, i) => BigInt("0x" + proof.proof.slice(2 + i * 64, 66 + i * 64))) }
     : { root: 0n, nullifier: 0n, proof: Array(8).fill(0n) };
   return send(CHAIN.agentKey, CHAIN.spender, SPENDER_ABI, "buy", [order, human]);
+}
+
+const attesterKey = isKey(process.env.HERO_ATTESTER_PRIVATE_KEY);
+
+/** Attester signs "the owner's linked World ID freshly approved this exact order"; the agent submits buyApproved(). */
+async function sendBuyApproved(order: ReturnType<typeof makeOrder>, authTime: number): Promise<Hex | undefined> {
+  if (!CHAIN.spender || !CHAIN.agentKey || !CHAIN.payer) return;
+  if (!attesterKey || !owner) throw new Error("attester key or World ID link missing");
+  const sig = await privateKeyToAccount(attesterKey).signTypedData(
+    approvalTypedData(CHAIN.spender, sepolia.id, orderHash(order), owner.continuity, BigInt(authTime))
+  );
+  return send(CHAIN.agentKey, CHAIN.spender, SPENDER_ABI, "buyApproved", [order, BigInt(authTime), sig]);
 }
 
 async function send(key: Hex, address: Hex, abi: any, functionName: string, args: any[]): Promise<Hex> {
@@ -280,10 +304,41 @@ async function onPrice(r: Req, price: number, deps: Deps) {
   }
   const a: Approval = { id: randomUUID(), requestId: r.id, cartHash: orderHash(order), order, price, status: "pending", expiresAt: Date.now() + 10 * 60_000 };
   a.returnTo = `hero://approval/${a.id}`;
-  await deps.startWorldApproval(a);
+  if (oidcEnabled()) {
+    // World ID for Agents: a device-grant attempt bound to this order, kept server-side
+    try {
+      a.device = await startDevice();
+    } catch (e: any) {
+      return void r.activity.push({ date: iso(Date.now()), text: `Could not reach World ID (${e.message}): waiting` });
+    }
+    a.userCode = a.device.userCode;
+    a.connectorURI = a.device.approvalUrl;
+  } else {
+    await deps.startWorldApproval(a);
+  }
   approvals.set(a.id, a);
   r.status = "needsApproval";
-  r.activity.push({ date: iso(Date.now()), text: `${usd(price)} is above auto ${usd(r.autoUsd)}: asked you to approve with World ID` });
+  r.activity.push({ date: iso(Date.now()), text: `${usd(price)} is above auto ${usd(r.autoUsd)}: asked you to confirm with World ID${a.userCode ? ` (code ${a.userCode})` : ""}` });
+}
+
+const hhmmss = (sec: number) => `${new Date(sec * 1000).toISOString().slice(11, 19)} UTC`;
+
+/** World ID for Agents result for an approval: only the owner's linked World ID, freshly proven for this attempt, approves. */
+async function advanceAgentWorld(a: Approval) {
+  if (a.status !== "pending" || !a.device) return;
+  const res = await pollDevice(a.device);
+  if (a.status !== "pending" || res.status === "pending") return; // a concurrent refresh already applied the result
+  if (res.status === "expired") return void (a.status = "expired");
+  a.status = "denied";
+  if (res.status !== "ok") a.denyReason = res.status === "denied" ? "You declined in World ID" : `World ID check failed: ${res.error}`;
+  else if (!owner) a.denyReason = "Link your World ID first";
+  else if (res.iss !== owner.iss || res.sub !== owner.sub) a.denyReason = "Approved by a different World ID";
+  else if (Date.now() / 1000 - res.authTime > 300) a.denyReason = "World ID confirmation is older than 5 minutes";
+  else {
+    a.status = "approved";
+    a.authTime = res.authTime;
+    requests.get(a.requestId)!.activity.push({ date: iso(Date.now()), text: `World ID confirmed by you at ${hhmmss(res.authTime)}` });
+  }
 }
 
 /** Contract custom error name (e.g. OverBudget) when viem decoded it, else the short message. */
@@ -291,19 +346,26 @@ const reason = (e: any): string => e?.cause?.data?.errorName ?? e?.walk?.((x: an
 
 async function refreshApproval(a: Approval, deps: Deps) {
   if (a.status === "pending" && Date.now() > a.expiresAt) a.status = "expired";
-  await deps.advanceWorld(a);
+  await (a.device ? advanceAgentWorld(a) : deps.advanceWorld(a));
   const r = requests.get(a.requestId)!;
-  if ((a.status === "denied" || a.status === "expired") && r.status === "needsApproval") r.status = "watching";
+  if ((a.status === "denied" || a.status === "expired") && !a.closed) {
+    a.closed = true;
+    if (r.status === "needsApproval") r.status = "watching";
+    r.activity.push({
+      date: iso(Date.now()),
+      text: a.status === "expired" ? "World ID confirmation expired — nothing was bought" : `Declined — nothing was bought (${a.denyReason ?? "World ID"})`,
+    });
+  }
   if (a.status !== "approved") return;
   if (a.buying) return; // a concurrent poll is already sending buy()
   a.buying = true;
   try {
-    a.txHash = await sendBuy(a.order, a.proof);
+    a.txHash = a.device ? await sendBuyApproved(a.order, a.authTime!) : await sendBuy(a.order, a.proof);
     a.status = "paid";
     markBought(r, a.price, a.txHash, true);
     await agentStatus(r, "bought");
   } catch (e: any) {
-    a.status = "denied"; a.denyReason = reason(e);
+    a.status = "denied"; a.denyReason = reason(e); a.closed = true;
     r.status = "watching";
     r.activity.push({ date: iso(Date.now()), text: `Contract rejected the purchase: ${a.denyReason}` });
   }
@@ -314,7 +376,7 @@ function approvalView(a: Approval) {
   return {
     orderId: a.id, requestId: r.id, title: r.title, imageUrl: r.imageUrl, merchant: r.merchant ?? "", payTo: a.order.payTo,
     price: a.price, autoUsd: r.autoUsd, maxUsd: r.maxUsd, orderHash: a.cartHash, approvalUrl: a.connectorURI ?? "",
-    expiresAt: iso(a.expiresAt), status: a.status, txHash: a.txHash, denyReason: a.denyReason,
+    expiresAt: iso(a.expiresAt), status: a.status, txHash: a.txHash, denyReason: a.denyReason, userCode: a.userCode,
   };
 }
 
@@ -391,6 +453,39 @@ export function mountHero(app: Express, deps: Deps) {
     res.json(approvalView(a));
   });
 
+  // One-time link: the owner proves with World ID (device grant) that they are the human who authorized this agent.
+  app.post("/api/world/link", async (_req, res) => {
+    if (!oidcEnabled()) return res.status(503).json({ error: "World ID for Agents is not configured" });
+    try {
+      const device = await startDevice();
+      const linkId = randomUUID();
+      links.set(linkId, { device, status: "pending" });
+      res.json({ linkId, userCode: device.userCode, approvalUrl: device.approvalUrl, expiresAt: iso(device.expiresAt) });
+    } catch (e: any) {
+      res.status(502).json({ error: e.message });
+    }
+  });
+  app.get("/api/world/link/:id", async (req, res) => {
+    const l = links.get(req.params.id);
+    if (!l) return res.status(404).end();
+    const r = l.status === "pending" ? await pollDevice(l.device) : undefined;
+    if (l.status === "pending" && r && r.status !== "pending") { // re-checked after await: apply the result once
+      if (r.status === "ok") {
+        owner = { iss: r.iss, sub: r.sub, continuity: keccak256(stringToBytes(`${r.iss}|${r.sub}`)), linkedAt: Date.now() };
+        writeFileSync(OWNER_FILE, JSON.stringify(owner));
+        l.status = "linked";
+        if (ENS.ownerKey && CHAIN.spender) {
+          // owner (= payer) records the continuity onchain; buyApproved() fails closed until this lands
+          send(ENS.ownerKey, CHAIN.spender, SPENDER_ABI, "setContinuity", [owner.continuity])
+            .then((h) => (l.txHash = h))
+            .catch((e) => console.error("setContinuity", e?.shortMessage ?? e));
+        }
+      } else if (r.status === "expired") l.status = "expired";
+      else { l.status = "denied"; l.error = r.status === "denied" ? "You declined in World ID" : r.error; }
+    }
+    res.json({ status: l.status, error: l.error, txHash: l.txHash });
+  });
+
   app.get("/api/budgets", async (_req, res) => {
     let usdcBalance = 0, allowance = 0;
     if (CHAIN.payer) {
@@ -399,7 +494,10 @@ export function mountHero(app: Express, deps: Deps) {
     }
     const periodEnds = iso((Math.floor(Date.now() / PERIOD) + 1) * PERIOD);
     res.json({
-      wallet: { address: CHAIN.payer ?? "", ensRoot: ROOT, usdcBalance, allowance, agent: CHAIN.agentKey ? privateKeyToAccount(CHAIN.agentKey).address : "" },
+      wallet: {
+        address: CHAIN.payer ?? "", ensRoot: ROOT, usdcBalance, allowance, agent: CHAIN.agentKey ? privateKeyToAccount(CHAIN.agentKey).address : "",
+        worldLinked: !!owner,
+      },
       categories: await Promise.all([...categories].map(async ([name, c]) => ({
         name, ensName: `${name.toLowerCase()}.${ROOT}`, limitUsd: c.limitUsd,
         spentUsd: Math.max(0, c.limitUsd - (await leftThisPeriod(name))), pct: c.pct, periodEnds,
