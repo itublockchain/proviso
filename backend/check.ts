@@ -347,6 +347,18 @@ assert.equal((await get("/w/not-a-token/status")).status, 404);
 assert.equal((await post(`/w/${tok}/connect`, undefined, { address: "0x0000000000000000000000000000000000000001" })).status, 503); // no chain here
 assert.equal((await post(`/w/${tok}/permit`, undefined, { signature: "0x" + "11".repeat(65) })).status, 503);
 assert.equal((await (await post("/api/wallet/demo", mallory, {})).json()).walletStatus, "demo");
+// "Reset & start over": own account only, files only here (no chain); the session ends with it
+process.env.HERO_ALLOW_RESET = "0";
+assert.equal((await post("/api/dev/reset", mallory, {})).status, 403);
+delete process.env.HERO_ALLOW_RESET;
+assert.equal((await post("/api/dev/reset", undefined, {})).status, 401);
+assert.deepEqual(await (await post("/api/dev/reset", mallory, {})).json(), { ok: true, reset: { chain: false, ens: null, requests: 1, orders: 0, txs: [] } });
+assert.equal((await get("/api/me", mallory)).status, 401);
+assert.equal(JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"))[`${ISS}|mallory-sub`], undefined);
+assert.ok(!readFileSync(join(stateDir, ".state.json"), "utf8").includes(dup[2]));
+assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]); // other accounts untouched
+const { resetTarget } = await import("./hero.js");
+await assert.rejects(resetTarget("nobody"), /no account matches/);
 assert.equal((await get("/api/logout", session, "POST")).status, 200);
 assert.equal((await get("/api/me", session)).status, 401); // logged out
 process.env.HERO_REQUIRE_LOGIN = "0";

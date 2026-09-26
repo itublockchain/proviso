@@ -69,6 +69,7 @@ type Account = {
   handle: string; root: string; wallet?: Hex; resolver?: Hex; limits: Record<string, number>;
   tokenHash?: string; tokenExp?: number; provisioned?: boolean; ready?: boolean;
   permit?: Hex; txs?: Hex[]; // the user's one setup signature (USDC permit) and Hero's provisioning tx hashes
+  setupNonce?: string; // in the resolver's CREATE2 salt: after a reset the same wallet + handle get a fresh resolver
 };
 const DEFAULT_LIMITS = { Hobby: 1000, Needs: 3000 };
 const ACCOUNTS_FILE = stateFile(".accounts.json");
@@ -279,6 +280,7 @@ const ENS_ABI = parseAbi([
   "function revokeRootRoles(uint256 roleBitmap, address account) returns (bool)",
   "function roles(uint256 resource, address account) view returns (uint256)",
   "function deployProxy(address impl, uint256 salt, bytes data) returns (address)",
+  "function unregister(uint256 anyId)",
 ]);
 const ALL_ROLES = BigInt("0x" + "1".repeat(64));
 const ZERO = "0x0000000000000000000000000000000000000000" as Hex;
@@ -302,6 +304,7 @@ const SPENDER_ABI = parseAbi([
   "function accounts(address) view returns (bytes32 root, address resolver, address agent, uint256 human)",
   "function continuity(address) view returns (bytes32)",
   "function remaining(bytes categoryName, address owner) view returns (uint256)",
+  "function resetFor(address owner)",
   "function verifiedMerchant(address) view returns (bool)",
   "event Bought(address indexed payer, bytes32 indexed orderHash, bytes32 indexed category, address payTo, uint256 price, bool human)",
   "error NotAgent()", "error OrderUsed()", "error Expired()", "error NotYourPolicy()", "error OverMax()",
@@ -430,7 +433,7 @@ function resolverInit(user: Hex, root: string, limits: Record<string, number>, o
     e("revokeRootRoles", [ALL_ROLES, FACTORY]),
   ]]);
 }
-const saltOf = (a: Account) => BigInt(keccak256(stringToBytes(`${a.wallet!.toLowerCase()}|${a.handle}`)));
+const saltOf = (a: Account) => BigInt(keccak256(stringToBytes(`${a.wallet!.toLowerCase()}|${a.handle}${a.setupNonce ? `|${a.setupNonce}` : ""}`)));
 const hasCode = async (x?: Hex) => !!x && !!(await pub.getCode({ address: x }));
 const walletChain = () => !!(CHAIN.rpc && CHAIN.spender && ENS.ownerKey && AGENT);
 
@@ -807,6 +810,53 @@ const limitsOpen = async (a: Account) => !(a.provisioned || a.permit || (a.mode 
 const PAGE = "./walletPage.js";
 const walletPage = () => import(PAGE).then((m) => String(m.walletPageHtml), () => "<!doctype html><title>Hero</title><p>Wallet setup page is not deployed yet.</p>");
 
+// ---------- start over (testnet): the same wallet + World ID from zero ----------
+
+export type ResetResult = { handle: string; wallet?: Hex; chain: boolean; ens: string | null; requests: number; orders: number; txs: Hex[] };
+
+/** Operator key: PolicySpender.resetFor(wallet) if the row on chain is this account's, and unregister <handle>.herodemo.eth if it
+ *  still points at this account's resolver (so the same handle can be registered again); then the account's requests, approvals,
+ *  orders, sessions and row are deleted. The next setup gets a fresh resolver (new setupNonce). The shared demo wallet is never
+ *  reset on chain. A failed tx aborts before anything is deleted; a retry skips what already happened. */
+export async function resetAccount(a: Account): Promise<ResetResult> {
+  await provisioning.get(a.key); // never race a provisioning run
+  const out: ResetResult = { handle: a.handle, wallet: a.wallet, chain: false, ens: null, requests: 0, orders: 0, txs: [] };
+  const w = a.wallet;
+  if (w && !same(w, CHAIN.payer) && walletChain()) {
+    const [[root], named] = await Promise.all([
+      pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "accounts", args: [w] }),
+      pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [a.handle] }),
+    ]);
+    const key = ENS.ownerKey!;
+    await Promise.all([
+      root === namehash(a.root) && send(key, CHAIN.spender!, SPENDER_ABI, "resetFor", [w]).then((h) => { out.chain = true; out.txs.push(h); }),
+      a.resolver && same(named, a.resolver) && send(key, HERODEMO_REGISTRY, ENS_ABI, "unregister", [BigInt(keccak256(stringToBytes(a.handle)))])
+        .then((h) => { out.ens = a.root; out.txs.push(h); }),
+    ]);
+  }
+  const ids = new Set([...requests.values()].filter((r) => r.acct === a.key).map((r) => r.id));
+  for (const id of ids) requests.delete(id);
+  for (const [id, x] of approvals) if (ids.has(x.requestId)) approvals.delete(id);
+  for (const [id, o] of orders) if (ids.has(o.requestId)) { orders.delete(id); out.orders++; }
+  for (const [h, x] of sessions) if (`${x.iss}|${x.sub}` === a.key) sessions.delete(h);
+  for (const [k, c] of creating) if (c.acct === a.key) creating.delete(k);
+  accounts.delete(a.key);
+  stateCache.delete(a.key);
+  out.requests = ids.size;
+  saveAccounts(); saveSessions(); saveState();
+  return out;
+}
+
+/** `npm run reset -- <wallet | handle | all>`: every matching account, one after another ("all" = every account not on the demo wallet). */
+export async function resetTarget(target: string): Promise<ResetResult[]> {
+  const t = target.trim().toLowerCase();
+  const list = [...accounts.values()].filter((a) => (t === "all" ? a.mode !== "demo" : same(t, a.wallet) || a.handle === t));
+  if (!t || !list.length) throw new Error(`no account matches "${target}"`);
+  const out: ResetResult[] = [];
+  for (const a of list) out.push(await resetAccount(a));
+  return out;
+}
+
 /** Draft key (account + title + bands + deadline) -> the request being created, kept until 60 s after it exists. */
 const creating = new Map<string, { acct?: string; p: Promise<Req>; until: number }>();
 
@@ -901,13 +951,13 @@ export function mountHero(app: Express, deps: Deps) {
           if (i === 5) return res.status(409).json({ error: "handle_taken" });
           h = `${a.handle.slice(0, 19)}-${randomBytes(2).toString("hex")}`;
         }
-        const b = { ...a, handle: h, root: `${h}.${ROOT}`, wallet: addr };
+        const b = { ...a, handle: h, root: `${h}.${ROOT}`, wallet: addr, setupNonce: randomBytes(4).toString("hex") };
         // CREATE2 address depends only on (operator, salt): known before the deploy is sent
         const { result } = await pub.simulateContract({
           account: OPERATOR!, address: FACTORY, abi: ENS_ABI, functionName: "deployProxy",
           args: [RES_IMPL, saltOf(b), resolverInit(addr, b.root, b.limits, OPERATOR!, AGENT!)],
         });
-        Object.assign(a, { handle: b.handle, root: b.root, wallet: addr, resolver: result }); // bound only once everything checked out
+        Object.assign(a, { handle: b.handle, root: b.root, wallet: addr, setupNonce: b.setupNonce, resolver: result }); // bound only once everything checked out
       } catch (e: any) {
         console.error("connect", e?.shortMessage ?? e?.message ?? e);
         return res.status(502).json({ error: "chain_unavailable" });
@@ -981,6 +1031,19 @@ export function mountHero(app: Express, deps: Deps) {
     };
   };
   app.get("/api/me", async (_req, res) => res.json(await meView(res)));
+  // "Reset & start over" (testnet, HERO_ALLOW_RESET=0 turns it off): wipes the caller's own account; the session ends with it.
+  app.post("/api/dev/reset", async (_req, res) => {
+    if (process.env.HERO_ALLOW_RESET === "0") return res.status(403).json({ error: "reset_disabled" });
+    const a = acctOf(res);
+    if (!a) return res.status(401).json({ error: "sign_in_required" });
+    try {
+      const { chain, ens, requests, orders, txs } = await resetAccount(a);
+      res.json({ ok: true, reset: { chain, ens, requests, orders, txs } });
+    } catch (e: any) {
+      console.error("reset", a.handle, e?.shortMessage ?? e?.message ?? e);
+      res.status(502).json({ error: "reset_failed" });
+    }
+  });
   app.post("/api/logout", (req, res) => {
     const t = bearer(req);
     if (t && sessions.delete(sha256(t))) saveSessions();

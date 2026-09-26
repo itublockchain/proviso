@@ -7,6 +7,7 @@
     "test": "tsx check.ts",
     "dev": "node --env-file=.env --import tsx --watch server.ts",
     "start": "node --env-file=.env --import tsx server.ts",
+    "reset": "node --env-file=.env --import tsx reset.ts",
     "prewarm": "node --env-file=.env --import tsx -e \"import('./monid.ts').then((m) => m.prewarm())\""
   },
   "keywords": [],

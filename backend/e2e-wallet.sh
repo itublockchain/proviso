@@ -2,7 +2,8 @@
 # End-to-end check of "the user's own wallet" on a LOCAL Sepolia fork (no live transactions):
 # sign-in (session fixture) -> /api/wallet/start -> /w/<t>/connect (permit typed data) -> the user's ONE signature (cast, fresh
 # key with 0 ETH) -> /w/<t>/permit -> Hero sends everything -> ready -> request -> auto-band buy pulls MockUSDC from the user's
-# wallet -> merchant order -> role and isolation checks. The user never sends a transaction.
+# wallet -> merchant order -> role and isolation checks -> "Reset & start over" -> the same wallet, World ID and handle onboard
+# again (fresh resolver, full budget) and buy -> the reset CLI. The user never sends a transaction.
 #   ./e2e-wallet.sh      starts anvil :8551 (if not running) and a fresh backend :8791 (state in $STATE); leaves both running
 # Stop: kill $(lsof -tiTCP:8791 -sTCP:LISTEN) $(lsof -tiTCP:8551 -sTCP:LISTEN)
 set -euo pipefail
@@ -33,16 +34,21 @@ for a in $OP $AGENT; do c rpc anvil_setBalance $a 0x56BC75E2D63100000 >/dev/null
 # --- backend :8791 on the fork, isolated state dir, two signed-in World IDs (session fixture: only sha256(token) on disk) ---
 kill $(lsof -tiTCP:8791 -sTCP:LISTEN) 2>/dev/null || true
 rm -rf "$STATE" && mkdir -p "$STATE"
-read -r TA TB SUBB < <(node -e '
-  const { createHash, randomBytes } = require("node:crypto"), now = Date.now(), out = {}, toks = [];
-  for (const who of ["a", "b"]) {
-    const t = randomBytes(32).toString("base64url"); toks.push(t);
-    out[createHash("sha256").update(t).digest("hex")] = { iss: "https://sandbox.auth.world.org", sub: `e2e-${who}-${now}`, createdAt: now, authTime: Math.floor(now / 1000) };
-  }
-  require("node:fs").writeFileSync(process.argv[1] + "/.sessions.json", JSON.stringify(out));
-  console.log(toks.join(" "), `e2e-b-${now}`);' "$STATE")
-SEPOLIA_RPC_URL=$RPC PORT=8791 POLICY_SPENDER=$SPENDER HERO_STATE_DIR=$STATE HERO_REQUIRE_LOGIN=1 nohup node --env-file=.env --import tsx server.ts >/tmp/hero-e2e-8791.log 2>&1 &
-for _ in $(seq 30); do curl -s $API/api/me >/dev/null && break; sleep 1; done
+# session fixture: "signs in" <sub> by adding sha256(token) to $STATE/.sessions.json (backend stopped); prints the token
+session() { node -e '
+  const { createHash, randomBytes } = require("node:crypto"), fs = require("node:fs"), f = process.argv[1] + "/.sessions.json", now = Date.now();
+  const out = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}, t = randomBytes(32).toString("base64url");
+  out[createHash("sha256").update(t).digest("hex")] = { iss: "https://sandbox.auth.world.org", sub: process.argv[2], createdAt: now, authTime: Math.floor(now / 1000) };
+  fs.writeFileSync(f, JSON.stringify(out));
+  console.log(t);' "$STATE" "$1"; }
+backend() {
+  SEPOLIA_RPC_URL=$RPC PORT=8791 POLICY_SPENDER=$SPENDER HERO_STATE_DIR=$STATE HERO_REQUIRE_LOGIN=1 nohup node --env-file=.env --import tsx server.ts >>/tmp/hero-e2e-8791.log 2>&1 &
+  for _ in $(seq 30); do curl -s $API/api/me >/dev/null && break; sleep 1; done; }
+stop_backend() { kill $(lsof -tiTCP:8791 -sTCP:LISTEN) 2>/dev/null || true; while lsof -tiTCP:8791 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; }
+SUBA=e2e-a-$(date +%s) SUBB=e2e-b-$(date +%s)
+TA=$(session $SUBA) TB=$(session $SUBB)
+: >/tmp/hero-e2e-8791.log
+backend
 
 # --- the user: a fresh key, onboarding budgets before the wallet exists ---
 USER_JSON=$(cast wallet new --json) UK=$(echo "$USER_JSON" | jq -r '.[0].private_key') U=$(echo "$USER_JSON" | jq -r '.[0].address')
@@ -137,4 +143,44 @@ eq "$(echo "$REQB" | jq -r .ensName | cut -d. -f2-)" hobby.herodemo.eth "demo re
 eq "$(echo "$REQB" | jq -r .status)" bought "demo wallet auto-band buy"
 eq "$(num $USDC 'balanceOf(address)(uint256)' $OP)" "$((A0 - 70000000))" "demo buy paid from alice's wallet"
 eq "$(api $TA GET /api/requests | jq --arg id "$(echo "$REQB" | jq -r .id)" '[.[]|select(.id==$id)]|length')" 0 "first account can't see the demo account's request"
-echo "e2e wallet: ok  (user $U, resolver $RES, root $ROOT)"
+
+# --- "Reset & start over": the same wallet + World ID + handle from zero ---
+RESET=$(api $TA POST /api/dev/reset)
+eq "$(echo "$RESET" | jq -r '[.ok, .reset.chain, .reset.ens, .reset.requests, .reset.orders] | join(",")')" "true,true,$ROOT,1,1" "POST /api/dev/reset: resetFor + ENS name + 1 request + 1 order"
+echo "    reset txs: $(echo "$RESET" | jq -r '.reset.txs | join(" ")')"
+eq "$(code $TA GET /api/me)" 401 "the session ends with the reset"
+eq "$(c call $SPENDER 'accounts(address)(bytes32,address,address,uint256)' $U | sed -n 3p)" 0x0000000000000000000000000000000000000000 "account row wiped on chain (no agent)"
+eq "$(num $SPENDER 'epoch(address)(uint256)' $U)" 1 "epoch 1"
+eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" 0x0000000000000000000000000000000000000000 "$HANDLE.herodemo.eth unregistered"
+eq "$(api $TB GET /api/me | jq -r .walletStatus)" demo "other accounts untouched"
+
+stop_backend && TA=$(session $SUBA) && backend # the same World ID signs in again
+eq "$(api $TA GET /api/me | jq -r .walletStatus)" none "same World ID: a fresh account"
+eq "$(code $TA PUT /api/budgets/Hobby -d '{"limitUsd":1500}')" 200 "onboarding budget again"
+T=$(api $TA POST /api/wallet/start -d "{\"handle\":\"$HANDLE\"}" | jq -r .pageUrl | sed 's#.*/w/##')
+CONNECT=$(curl -sS -X POST -H 'content-type: application/json' $API/w/$T/connect -d "{\"address\":\"$U\"}")
+eq "$(echo "$CONNECT" | jq -r .ensName)" "$ROOT" "the same handle is free again"
+TD=$(echo "$CONNECT" | jq -c .typedData)
+eq "$(echo "$TD" | jq -r .message.nonce)" 1 "second permit (nonce 1)"
+eq "$(curl -sS -X POST -H 'content-type: application/json' $API/w/$T/permit -d "{\"signature\":\"$(cast wallet sign --private-key $UK --data "$TD")\"}" | jq -r .ok)" true "same wallet signs again"
+until_json $API/w/$T/status '.ready and .done.resolver and .done.name and .done.account' "ready again"
+RES2=$(c call $SPENDER "accounts(address)(bytes32,address,address,uint256)" $U | sed -n 2p)
+[ "$(echo $RES2 | tr A-F a-f)" != "$(echo $RES | tr A-F a-f)" ] && echo "ok  fresh resolver $RES2 (old $RES)" || fail "resolver reused"
+for _ in $(seq 30); do [ "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE | tr A-F a-f)" = "$(echo $RES2 | tr A-F a-f)" ] && break; sleep 2; done
+eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" "$RES2" "$HANDLE.herodemo.eth -> the new resolver"
+eq "$(num $SPENDER 'spentOf(address,bytes)(uint256)' $U $HOBBY)" 0 "spend counter back to 0 in the same period"
+eq "$(num $SPENDER 'remaining(bytes,address)(uint256)' $HOBBY $U)" 1500000000 "full hobby budget again"
+REQ=$(api $TA POST /api/requests -d "{\"title\":\"E2E zzqx widget again\",\"query\":\"zzqx e2e widget\",\"category\":\"Hobby\",\"autoUsd\":100,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}")
+[ "$(echo "$REQ" | jq -r .status)" = bought ] || REQ=$(api $TA POST /api/requests/$(echo "$REQ" | jq -r .id)/price -d '{"price":80}')
+eq "$(echo "$REQ" | jq -r .status)" bought "auto-band buy after the reset"
+P2=$(echo "$REQ" | jq -r '.activity[] | select(.text|startswith("Bought")) | .text' | sed -E 's/Bought for \$([0-9]+).*/\1/')
+echo "    buy tx $(echo "$REQ" | jq -r '.activity[] | select(.text|startswith("Bought")) | .txHash') (\$$P2)"
+eq "$(num $SPENDER 'remaining(bytes,address)(uint256)' $HOBBY $U)" "$((1500000000 - P2 * 1000000))" "budget counts only the new buy"
+
+# --- the CLI, while the backend runs (loopback admin port) ---
+OUT=$(SEPOLIA_RPC_URL=$RPC PORT=8791 POLICY_SPENDER=$SPENDER HERO_STATE_DIR=$STATE node --env-file=.env --import tsx reset.ts $U)
+echo "$OUT" | sed 's/^/    /'
+echo "$OUT" | grep -q "via the running backend" && echo "$OUT" | grep -q "resetFor sent" && echo "$OUT" | grep -q "$ROOT unregistered" || fail "npm run reset -- <wallet>"
+eq "$(num $SPENDER 'epoch(address)(uint256)' $U)" 2 "CLI reset: epoch 2"
+eq "$(code $TA GET /api/me)" 401 "CLI reset ends the session"
+echo "e2e wallet: ok  (user $U, resolver $RES -> $RES2, root $ROOT)"
