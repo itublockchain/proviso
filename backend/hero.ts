@@ -268,9 +268,14 @@ const ENS = {
 const FACTORY = "0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C" as Hex;
 const RES_IMPL = "0x14F09Fd05d4585759e54844DC9B00147131Cf243" as Hex;
 const HERODEMO_REGISTRY = "0x9817e00c0ac5478c60D7Bd0A6E55aee939d11aFa" as Hex;
+const USERREG_IMPL = "0xA80338aAA8D23831cEa25E858D1774534aBb0263" as Hex; // ENSv2 UserRegistry implementation
 const ENS_ABI = parseAbi([
   "function register(string label, address owner, address subregistry, address resolver, uint256 roles, uint64 expiry) returns (uint256)",
   "function getResolver(string label) view returns (address)",
+  "function getSubregistry(string label) view returns (address)",
+  "function setSubregistry(uint256 anyId, address registry)",
+  "function setParent(address parent, string label)",
+  "function initialize((address account, uint256 roleBitmap)[] grants)",
   "function setData(bytes name, string key, bytes value)",
   "function setText(bytes name, string key, string value)",
   "function setAddress(bytes name, uint256 coinType, bytes value)",
@@ -393,7 +398,7 @@ async function mined(hash: Hex, what: string): Promise<Hex> {
   return hash;
 }
 
-/** Operator writes the request's band records on the payer's resolver in one tx (request names resolve via the resolver, not registered).
+/** Operator writes the request's band records on the payer's resolver in one tx (the `data` records PolicySpender reads).
  *  Returns once broadcast; the request's buys wait for it to be mined (policyTxs). */
 async function writePolicy(r: Req): Promise<Hex | undefined> {
   if (!ENS.ownerKey || !r.ctx.resolver) return;
@@ -403,8 +408,78 @@ async function writePolicy(r: Req): Promise<Hex | undefined> {
     .map(([k, v]) => encodeFunctionData({ abi: ENS_ABI, functionName: "setData", args: [name, k, u256(v)] }));
   return submit(ENS.ownerKey, r.ctx.resolver, ENS_ABI, "multicall", [calls]);
 }
-/** request id -> its policy tx until mined (never rejects); a buy awaits it so the contract sees the records. */
+/** request id -> its policy tx and name registration until mined (never rejects); a buy awaits it so the contract sees the records. */
 const policyTxs = new Map<string, Promise<void>>();
+
+/** Human-readable mirror of the policy for ENS tools (text only; the contract reads the `data` records). */
+export const policyTexts = (autoUsd: number, maxUsd: number, deadline: string) => ({
+  auto: `${autoUsd} USDC`, max: `${maxUsd} USDC`, deadline: deadline.slice(0, 10),
+  description: `Hero policy: buys on its own up to ${usd(autoUsd)}, asks the owner up to ${usd(maxUsd)}, until ${deadline.slice(0, 10)}`,
+});
+const categoryTexts = (category: string, limitUsd: number) => ({
+  limit: `${limitUsd} USDC`, description: `Hero category: ${category}, the agent may spend up to ${usd(limitUsd)} per 30 days`,
+});
+const setTexts = (name: string, texts: Record<string, string>) =>
+  Object.entries(texts).map(([k, v]) => encodeFunctionData({ abi: ENS_ABI, functionName: "setText", args: [dnsEncode(name), k, v] }));
+
+/** Its own tx, so a resolver made before the operator's text grants reverts here and never in the data write. */
+async function writeTexts(r: Req) {
+  if (!ENS.ownerKey || !r.ctx.resolver) return;
+  await send(ENS.ownerKey, r.ctx.resolver, ENS_ABI, "multicall", [setTexts(r.ensName, policyTexts(r.autoUsd, r.maxUsd, r.deadline))]);
+}
+
+const getSub = (reg: Hex, label: string) => pub.readContract({ address: reg, abi: ENS_ABI, functionName: "getSubregistry", args: [label] });
+/** Registry holding <category>.<root>'s children, walked from herodemo.eth ([<handle> ->] <category>); ZERO if the tree is missing. */
+async function categoryRegistry(r: Req): Promise<Hex> {
+  let reg = HERODEMO_REGISTRY;
+  for (const l of r.ensName.slice(0, -ROOT.length - 1).split(".").slice(1).reverse()) if (reg !== ZERO) reg = await getSub(reg, l);
+  return reg;
+}
+
+/** Registers the request's own name: expiry = deadline, owner = payer, resolver = payer's resolver. Resolves once mined. */
+async function registerRequest(r: Req): Promise<Hex | undefined> {
+  if (!ENS.ownerKey || !r.ctx.resolver || !r.ctx.payer) return;
+  let reg = await categoryRegistry(r);
+  const a = accounts.get(r.ctx.acct ?? "");
+  if (reg === ZERO && !r.ctx.demo && a) reg = await tree(a).then(() => categoryRegistry(r)); // an account from before trees existed
+  if (reg === ZERO) throw new Error(`no registry under ${r.ensName}`);
+  const expiry = BigInt(Math.floor(Date.parse(r.deadline) / 1000));
+  return send(ENS.ownerKey, reg, ENS_ABI, "register", [r.ensName.split(".")[0], r.ctx.payer, ZERO, r.ctx.resolver, ALL_ROLES, expiry]);
+}
+
+/** Per-user tree so request names can be registered: <handle>.herodemo.eth -> a registry holding hobby/needs, each with its own
+ *  registry (UserRegistry proxies, user + operator admins). Two blocks (deploys, then links), sent after onboarding, never on its
+ *  path. Idempotent: reads chain first; random salts, so a half-built tree is finished with fresh registries. */
+const trees = new Map<string, Promise<void>>();
+function tree(a: Account): Promise<void> {
+  let p = trees.get(a.key);
+  if (!p) trees.set(a.key, (p = buildTree(a).finally(() => trees.delete(a.key))));
+  return p;
+}
+async function buildTree(a: Account) {
+  const key = ENS.ownerKey!, w = a.wallet!, cats = Object.keys(a.limits).map((c) => c.toLowerCase());
+  const init = encodeFunctionData({ abi: ENS_ABI, functionName: "initialize", args: [[{ account: w, roleBitmap: ALL_ROLES }, { account: OPERATOR!, roleBitmap: ALL_ROLES }]] });
+  const deploy = async (): Promise<Hex> => {
+    const args = [USERREG_IMPL, BigInt(toHex(randomBytes(32))), init] as const;
+    const { result } = await pub.simulateContract({ account: OPERATOR!, address: FACTORY, abi: ENS_ABI, functionName: "deployProxy", args });
+    await send(key, FACTORY, ENS_ABI, "deployProxy", [...args]);
+    return result;
+  };
+  const old = await getSub(HERODEMO_REGISTRY, a.handle);
+  const subs = old === ZERO ? cats.map(() => ZERO) : await Promise.all(cats.map((c) => getSub(old, c)));
+  const [top, ...regs] = await Promise.all([old === ZERO ? deploy() : old, ...subs.map((x) => (x === ZERO ? deploy() : x))]);
+  const exp = BigInt(Math.floor(Date.now() / 1000) + 365 * 86_400);
+  await Promise.all([
+    ...(old === ZERO ? [
+      send(key, HERODEMO_REGISTRY, ENS_ABI, "setSubregistry", [BigInt(keccak256(stringToBytes(a.handle))), top]),
+      send(key, top, ENS_ABI, "setParent", [HERODEMO_REGISTRY, a.handle]),
+    ] : []),
+    ...cats.flatMap((c, i) => (subs[i] !== ZERO ? [] : [
+      send(key, top, ENS_ABI, "register", [c, w, regs[i], a.resolver!, ALL_ROLES, exp]),
+      send(key, regs[i], ENS_ABI, "setParent", [top, c]),
+    ])),
+  ]);
+}
 
 /** The agent's only ENS write right: the `status` text record. */
 async function agentStatus(r: Req, status: string) {
@@ -421,14 +496,19 @@ async function syncDemoContinuity(a: Account): Promise<Hex | undefined> {
 
 // ---------- the user's own wallet: provisioning + on-chain readiness ----------
 
-/** One-tx user resolver: user (+ factory, temporarily) admin; limits; operator may set only auto/max/deadline, agent only status. */
+/** One-tx user resolver: user (+ factory, temporarily) admin; limits (+ their text mirror); operator may set only auto/max/deadline
+ *  (data and text) and description text, agent only status. */
 function resolverInit(user: Hex, root: string, limits: Record<string, number>, operator: Hex, agent: Hex): Hex {
   const e = (functionName: string, args: any[]) => encodeFunctionData({ abi: ENS_ABI, functionName, args } as any);
   const grant = (setter: Hex, who: Hex) => e("grantSetterRoles", [setter, who]);
   return e("initialize", [[{ account: user, roleBitmap: ALL_ROLES }, { account: FACTORY, roleBitmap: ALL_ROLES }], [
     e("setAddress", [dnsEncode(root), 60n, user]),
-    ...Object.entries(limits).map(([c, usd]) => e("setData", [dnsEncode(`${c.toLowerCase()}.${root}`), "limit", u256(Math.round(usd * 1e6))])),
+    ...Object.entries(limits).flatMap(([c, usd]) => [
+      e("setData", [dnsEncode(`${c.toLowerCase()}.${root}`), "limit", u256(Math.round(usd * 1e6))]),
+      ...setTexts(`${c.toLowerCase()}.${root}`, categoryTexts(c, usd)),
+    ]),
     ...["auto", "max", "deadline"].map((k) => grant(e("setData", ["0x00", k, "0x"]), operator)),
+    ...["auto", "max", "deadline", "description"].map((k) => grant(e("setText", ["0x00", k, ""]), operator)),
     grant(e("setText", ["0x00", "status", ""]), agent),
     e("revokeRootRoles", [ALL_ROLES, FACTORY]),
   ]]);
@@ -508,6 +588,7 @@ async function doProvision(a: Account) {
   if (f !== 0n || o !== 0n) throw new Error(`resolver ${res}: Hero holds root roles (factory ${f}, operator ${o})`);
   a.provisioned = true;
   saveAccounts();
+  void tree(a).catch((e) => console.error("tree", a.root, e?.shortMessage ?? e?.message ?? e)); // for request names, off the onboarding path
 }
 
 type WalletState = { signed: boolean; done: { resolver: boolean; name: boolean; account: boolean }; ready: boolean };
@@ -820,6 +901,7 @@ export type ResetResult = { handle: string; wallet?: Hex; chain: boolean; ens: s
  *  reset on chain. A failed tx aborts before anything is deleted; a retry skips what already happened. */
 export async function resetAccount(a: Account): Promise<ResetResult> {
   await provisioning.get(a.key); // never race a provisioning run
+  await trees.get(a.key)?.catch(() => {});
   const out: ResetResult = { handle: a.handle, wallet: a.wallet, chain: false, ens: null, requests: 0, orders: 0, txs: [] };
   const w = a.wallet;
   if (w && !same(w, CHAIN.payer) && walletChain()) {
@@ -879,10 +961,15 @@ async function createRequest(d: Draft, a: Account | undefined, deps: Deps): Prom
   const tx = await writePolicy(r).catch((e) => void console.error("writePolicy", e?.shortMessage ?? e));
   const row: Req["activity"][number] = { date: iso(Date.now()), text: `Policy ${tx ? "written to ENS (confirming)" : "saved (demo, no chain)"}: ${r.ensName} auto ${usd(d.autoUsd)}, max ${usd(d.maxUsd)}`, txHash: tx };
   r.activity.push(row);
-  if (tx) policyTxs.set(r.id, mined(tx, "policy").then(
+  const log = (what: string) => (e: any) => void console.error(what, r.ensName, e?.shortMessage ?? e?.message ?? e);
+  const policy = tx && mined(tx, "policy").then(
     () => void (row.text = row.text.replace(" (confirming)", "")),
-    (e) => { console.error("writePolicy", e?.shortMessage ?? e?.message ?? e); Object.assign(row, { text: `Policy write failed on chain: ${r.ensName}`, blocked: true }); },
-  ).finally(() => { policyTxs.delete(r.id); persist(); }));
+    (e) => { log("writePolicy")(e); Object.assign(row, { text: `Policy write failed on chain: ${r.ensName}`, blocked: true }); },
+  );
+  // the name itself and the text mirror: sent in the background, a failure is only logged (the contract reads the data records)
+  const named = registerRequest(r).then((h) => void (h && r.activity.push({ date: iso(Date.now()), text: `Registered ${r.ensName} in ENS until ${r.deadline.slice(0, 10)}`, txHash: h })), log("register"));
+  void writeTexts(r).catch(log("policy texts"));
+  if (tx) policyTxs.set(r.id, Promise.all([policy, named]).then(() => { policyTxs.delete(r.id); persist(); }));
   if (offers.length) r.activity.push({ date: iso(Date.now()), text: `Compared ${offers.length} stores via Monid (${sources(offers)}): best ${usd(current)} at ${r.merchant}` });
   requests.set(id, r);
   if (current <= d.autoUsd) await onPrice(r, current, deps); // already in the auto band: the agent acts now
@@ -1224,7 +1311,8 @@ export function mountHero(app: Express, deps: Deps) {
       // one record update re-caps every request in this category
       const node = dnsEncode(`${name.toLowerCase()}.${ROOT}`);
       const calls = ([["limit", Math.round(c.limitUsd * 1e6)], ["pct", c.pct ?? 0]] as const)
-        .map(([k, v]) => encodeFunctionData({ abi: ENS_ABI, functionName: "setData", args: [node, k, u256(v)] }));
+        .map(([k, v]) => encodeFunctionData({ abi: ENS_ABI, functionName: "setData", args: [node, k, u256(v)] }))
+        .concat(setTexts(`${name.toLowerCase()}.${ROOT}`, categoryTexts(name, c.limitUsd))); // alice's resolver: the operator is its admin
       await send(ENS.ownerKey, ENS.resolver, ENS_ABI, "multicall", [calls]).catch((e) => console.error("limit write", e?.shortMessage ?? e));
     }
     res.json({ name, ensName: `${name.toLowerCase()}.${ROOT}`, limitUsd: c.limitUsd, spentUsd: spentThisPeriod(ctxOf(a), name), pct: c.pct, periodEnds: periodEnds() });

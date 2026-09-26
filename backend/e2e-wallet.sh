@@ -20,6 +20,10 @@ c() { cast "$@" --rpc-url $RPC; }
 num() { c call "$@" | awk '{print $1}'; }
 api() { local tok=$1 method=$2 path=$3; shift 3; curl -sS -X "$method" -H "authorization: Bearer $tok" -H 'content-type: application/json' "$API$path" "$@"; }
 code() { local tok=$1 method=$2 path=$3; shift 3; curl -s -o /dev/null -w '%{http_code}' -X "$method" -H "authorization: Bearer $tok" -H 'content-type: application/json' "$API$path" "$@"; }
+dns() { node -e 'const n=process.argv[1];console.log("0x"+Buffer.concat([...n.split(".").map(l=>Buffer.concat([Buffer.from([l.length]),Buffer.from(l)])),Buffer.from([0])]).toString("hex"))' "$1"; }
+UR=0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe ZERO=0x0000000000000000000000000000000000000000
+text() { c call $UR 'resolve(bytes,bytes)(bytes,address)' "$(dns "$1")" "$(cast calldata 'text(bytes32,string)' 0x$(printf '0%.0s' {1..64}) "$2")" 2>/dev/null | head -1 | xargs cast abi-decode 'f()(string)' 2>/dev/null | sed 's/^"//; s/"$//'; }
+until_text() { for _ in $(seq 30); do [ -n "$(text "$1" "$2")" ] && break; sleep 1; done; eq "$(text "$1" "$2")" "$3" "UR text $2 of $1"; }
 until_json() { # until_json <url> <jq-bool> <what>
   for _ in $(seq 60); do [ "$(curl -s "$1" | jq -r "$2")" = true ] && { echo "ok  $3"; return; }; sleep 2; done; fail "timeout: $3"; }
 
@@ -115,6 +119,18 @@ eq "$(num $USDC 'balanceOf(address)(uint256)' $MERCHANT)" "$((M0 + P * 1000000))
 eq "$(c tx $BUY from)" "$AGENT" "buy() sent by the agent"
 eq "$(curl -s $API/merchant/orders | jq -r --arg h $BUY '[.[] | select(.txHash == $h and .merchantVerified)] | length')" 1 "merchant order for this buy (verified merchant)"
 
+# --- the request name is registered in the user's own tree (expiry = deadline) and mirrors the policy as text records ---
+NAME=$(echo "$REQ" | jq -r .ensName) LABEL=$(echo "$REQ" | jq -r .ensName | cut -d. -f1)
+TOP=$(c call $REGISTRY 'getSubregistry(string)(address)' $HANDLE)
+CAT=$(c call $TOP 'getSubregistry(string)(address)' hobby 2>/dev/null || echo $ZERO)
+[ "$TOP" != $ZERO ] && [ "$CAT" != $ZERO ] && echo "ok  per-user tree: $HANDLE -> $TOP, hobby -> $CAT" || fail "per-user tree"
+eq "$(c call $CAT 'findOwner(string)(address)' $LABEL)" "$U" "request name registered, owned by the user"
+eq "$(c call $CAT 'getResolver(string)(address)' $LABEL)" "$RES" "request name resolver = the user's"
+eq "$(num $CAT 'findExpiry(string)(uint64)' $LABEL)" "$(node -e 'console.log(Math.floor(Date.parse(process.argv[1])/1000))' "$DEADLINE")" "request name expiry = deadline"
+until_text "$NAME" description "Hero policy: buys on its own up to \$100, asks the owner up to \$200, until ${DEADLINE:0:10}"
+eq "$(text "$NAME" max)" "200 USDC" "UR text max"
+eq "$(text "hobby.$ROOT" limit)" "1500 USDC" "UR text limit on the category (resolver initializer)"
+
 # --- roles on the user's resolver ---
 c rpc anvil_impersonateAccount $AGENT >/dev/null; c rpc anvil_impersonateAccount $OP >/dev/null
 REQNAME=$(node -e 'const n=process.argv[1];console.log("0x"+Buffer.concat([...n.split(".").map(l=>Buffer.concat([Buffer.from([l.length]),Buffer.from(l)])),Buffer.from([0])]).toString("hex"))' "$(echo "$REQ" | jq -r .ensName)")
@@ -143,6 +159,9 @@ eq "$(echo "$REQB" | jq -r .ensName | cut -d. -f2-)" hobby.herodemo.eth "demo re
 eq "$(echo "$REQB" | jq -r .status)" bought "demo wallet auto-band buy"
 eq "$(num $USDC 'balanceOf(address)(uint256)' $OP)" "$((A0 - 70000000))" "demo buy paid from alice's wallet"
 eq "$(api $TA GET /api/requests | jq --arg id "$(echo "$REQB" | jq -r .id)" '[.[]|select(.id==$id)]|length')" 0 "first account can't see the demo account's request"
+LB=$(echo "$REQB" | jq -r .ensName | cut -d. -f1) HOBBYREG=$(c call $REGISTRY 'getSubregistry(string)(address)' hobby)
+eq "$(num $HOBBYREG 'findExpiry(string)(uint64)' $LB)" "$(node -e 'console.log(Math.floor(Date.parse(process.argv[1])/1000))' "$DEADLINE")" "demo request name registered under hobby.herodemo.eth, expiry = deadline"
+until_text "$(echo "$REQB" | jq -r .ensName)" auto "100 USDC"
 
 # --- "Reset & start over": the same wallet + World ID + handle from zero ---
 RESET=$(api $TA POST /api/dev/reset)
@@ -152,6 +171,8 @@ eq "$(code $TA GET /api/me)" 401 "the session ends with the reset"
 eq "$(c call $SPENDER 'accounts(address)(bytes32,address,address,uint256)' $U | sed -n 3p)" 0x0000000000000000000000000000000000000000 "account row wiped on chain (no agent)"
 eq "$(num $SPENDER 'epoch(address)(uint256)' $U)" 1 "epoch 1"
 eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" 0x0000000000000000000000000000000000000000 "$HANDLE.herodemo.eth unregistered"
+eq "$(c call $REGISTRY 'getSubregistry(string)(address)' $HANDLE)" $ZERO "its request tree is unreachable"
+eq "$(text "$NAME" max)" "" "old request name no longer resolves"
 eq "$(api $TB GET /api/me | jq -r .walletStatus)" demo "other accounts untouched"
 
 stop_backend && TA=$(session $SUBA) && backend # the same World ID signs in again
@@ -173,6 +194,9 @@ eq "$(num $SPENDER 'remaining(bytes,address)(uint256)' $HOBBY $U)" 1500000000 "f
 REQ=$(api $TA POST /api/requests -d "{\"title\":\"E2E zzqx widget again\",\"query\":\"zzqx e2e widget\",\"category\":\"Hobby\",\"autoUsd\":100,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}")
 [ "$(echo "$REQ" | jq -r .status)" = bought ] || REQ=$(api $TA POST /api/requests/$(echo "$REQ" | jq -r .id)/price -d '{"price":80}')
 eq "$(echo "$REQ" | jq -r .status)" bought "auto-band buy after the reset"
+TOP2=$(c call $REGISTRY 'getSubregistry(string)(address)' $HANDLE)
+[ "$TOP2" != $ZERO ] && [ "$TOP2" != "$TOP" ] && echo "ok  fresh request tree $TOP2 (old $TOP)" || fail "request tree after reset: $TOP2"
+eq "$(c call $(c call $TOP2 'getSubregistry(string)(address)' hobby) 'findOwner(string)(address)' $(echo "$REQ" | jq -r .ensName | cut -d. -f1))" "$U" "request name registered again"
 P2=$(echo "$REQ" | jq -r '.activity[] | select(.text|startswith("Bought")) | .text' | sed -E 's/Bought for \$([0-9]+).*/\1/')
 echo "    buy tx $(echo "$REQ" | jq -r '.activity[] | select(.text|startswith("Bought")) | .txHash') (\$$P2)"
 eq "$(num $SPENDER 'remaining(bytes,address)(uint256)' $HOBBY $U)" "$((1500000000 - P2 * 1000000))" "budget counts only the new buy"
