@@ -24,6 +24,10 @@ dns() { node -e 'const n=process.argv[1];console.log("0x"+Buffer.concat([...n.sp
 UR=0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe ZERO=0x0000000000000000000000000000000000000000
 text() { c call $UR 'resolve(bytes,bytes)(bytes,address)' "$(dns "$1")" "$(cast calldata 'text(bytes32,string)' 0x$(printf '0%.0s' {1..64}) "$2")" 2>/dev/null | head -1 | xargs cast abi-decode 'f()(string)' 2>/dev/null | sed 's/^"//; s/"$//'; }
 until_text() { for _ in $(seq 30); do [ -n "$(text "$1" "$2")" ] && break; sleep 1; done; eq "$(text "$1" "$2")" "$3" "UR text $2 of $1"; }
+settled() { # settled <token> <request json>: POST /api/requests answers at once; wait for its background setup
+  local tok=$1 id; id=$(echo "$2" | jq -r .id)
+  for _ in $(seq 120); do local r; r=$(api $tok GET /api/requests/$id); [ -z "$(echo "$r" | jq -r '.preparing // empty')" ] && { echo "$r"; return; }; sleep 1; done
+  fail "setup of request $id never finished"; }
 until_json() { # until_json <url> <jq-bool> <what>
   for _ in $(seq 60); do [ "$(curl -s "$1" | jq -r "$2")" = true ] && { echo "ok  $3"; return; }; sleep 2; done; fail "timeout: $3"; }
 
@@ -106,7 +110,11 @@ eq "$(code $TA PUT /api/budgets/Hobby -d '{"limitUsd":900}')" 409 "PUT budgets a
 # --- a request for this account, priced into the auto band: buy() pulls from the user's wallet ---
 U0=$(num $USDC 'balanceOf(address)(uint256)' $U) M0=$(num $USDC 'balanceOf(address)(uint256)' $MERCHANT)
 DEADLINE=$(node -e 'console.log(new Date(Date.now()+30*864e5).toISOString())')
+eq "$(api $TA POST /api/requests -d "{\"title\":\"x\",\"query\":\"x\",\"category\":\"Hobby\",\"autoUsd\":300,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}" | jq -r .message)" '"Buys on its own" ($300) can'"'"'t be above "asks you up to" ($200).' "a bad draft is refused with a readable reason"
 REQ=$(api $TA POST /api/requests -d "{\"title\":\"E2E zzqx widget\",\"query\":\"zzqx e2e widget\",\"category\":\"Hobby\",\"autoUsd\":100,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}")
+eq "$(echo "$REQ" | jq -r .preparing)" "Comparing stores" "POST /api/requests answers before the slow setup"
+REQ=$(settled $TA "$REQ")
+eq "$(echo "$REQ" | jq -r '.setupError // "none"')" none "setup finished without errors"
 ID=$(echo "$REQ" | jq -r .id)
 eq "$(echo "$REQ" | jq -r .ensName)" "$(echo "$REQ" | jq -r .ensName | cut -d. -f1).hobby.$ROOT" "request name under the user's root"
 echo "    policy tx $(echo "$REQ" | jq -r '.activity[0].txHash')"
@@ -161,6 +169,7 @@ eq "$(c call $SPENDER 'continuity(address)(bytes32)' $OP)" "$CB" "demo selection
 A0=$(num $USDC 'balanceOf(address)(uint256)' $OP)
 REQB=$(api $TB POST /api/requests -d "{\"title\":\"E2E zzqx gadget\",\"query\":\"zzqx e2e gadget\",\"category\":\"Hobby\",\"autoUsd\":100,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}")
 eq "$(echo "$REQB" | jq -r .ensName | cut -d. -f2-)" hobby.alice.proviso.eth "demo request under the demo username: <item>.hobby.alice.proviso.eth"
+REQB=$(settled $TB "$REQB")
 [ "$(echo "$REQB" | jq -r .status)" = bought ] || REQB=$(api $TB POST /api/requests/$(echo "$REQB" | jq -r .id)/price -d '{"price":70}')
 eq "$(echo "$REQB" | jq -r .status)" bought "demo wallet auto-band buy"
 eq "$(num $USDC 'balanceOf(address)(uint256)' $OP)" "$((A0 - 70000000))" "demo buy paid from alice's wallet"
@@ -198,6 +207,7 @@ eq "$(c call $REGISTRY 'getResolver(string)(address)' $HANDLE)" "$RES2" "$HANDLE
 eq "$(num $SPENDER 'spentOf(address,bytes)(uint256)' $U $HOBBY)" 0 "spend counter back to 0 in the same period"
 eq "$(num $SPENDER 'remaining(bytes,address)(uint256)' $HOBBY $U)" 1500000000 "full hobby budget again"
 REQ=$(api $TA POST /api/requests -d "{\"title\":\"E2E zzqx widget again\",\"query\":\"zzqx e2e widget\",\"category\":\"Hobby\",\"autoUsd\":100,\"maxUsd\":200,\"deadline\":\"$DEADLINE\"}")
+REQ=$(settled $TA "$REQ")
 [ "$(echo "$REQ" | jq -r .status)" = bought ] || REQ=$(api $TA POST /api/requests/$(echo "$REQ" | jq -r .id)/price -d '{"price":80}')
 eq "$(echo "$REQ" | jq -r .status)" bought "auto-band buy after the reset"
 TOP2=$(c call $REGISTRY 'getSubregistry(string)(address)' $HANDLE)

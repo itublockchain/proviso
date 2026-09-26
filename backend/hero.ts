@@ -53,6 +53,8 @@ type Req = Draft & {
   activity: { date: string; text: string; txHash?: string; blocked?: boolean }[]; // blocked: a policy/contract rejection
   demoFrom?: number; // price before the first demo lever pull, restored by "reset"
   publishedStatus?: string; // last status line written to ENS (status + description records)
+  preparing?: string; // the setup step running in the background after POST /api/requests returned; undefined when done
+  setupError?: string; // why the setup stopped, in words the app shows as-is
 };
 type Approval = {
   id: string; requestId: string; cartHash: Hex; order: any; price: number; status: "pending" | "approved" | "denied" | "expired" | "paid";
@@ -144,6 +146,10 @@ export function loadState() {
   requests.clear(); approvals.clear(); orders.clear();
   const s = load(STATE_FILE);
   for (const r of s?.requests ?? []) if (r.ensName.endsWith(`.${ROOT}`)) requests.set(r.id, r); // older roots can't be bought any more
+  for (const r of requests.values()) if (r.preparing) { // its setup died with the previous process
+    r.setupError = `Setup was interrupted at "${r.preparing}" by a backend restart. Create the request again.`;
+    r.preparing = undefined;
+  }
   for (const o of s?.orders ?? []) orders.set(o.id, o);
   for (const a of s?.approvals ?? []) {
     if (!requests.has(a.requestId)) continue;
@@ -521,7 +527,7 @@ function publishStatuses() {
   if (!CHAIN.agentKey || !ENS.ownerKey) return;
   for (const r of requests.values()) {
     const line = statusLine(r);
-    if (!r.ctx.resolver || r.publishedStatus === line) continue;
+    if (!r.ctx.resolver || r.preparing || r.publishedStatus === line) continue;
     r.publishedStatus = line;
     persist();
     const desc = `${policyTexts(r.autoUsd, r.maxUsd, r.deadline).description}. Now: ${line}`;
@@ -1007,38 +1013,78 @@ export async function resetTarget(target: string): Promise<ResetResult[]> {
 const creating = new Map<string, { acct?: string; p: Promise<Req>; until: number }>();
 
 /** Live listings -> store comparison -> policy tx (broadcast, not awaited) -> an auto-band buy if already cheap enough -> strategy. */
-async function createRequest(d: Draft, a: Account | undefined, deps: Deps): Promise<Req> {
+/** What is wrong with a draft, in words for the app; undefined when it can be saved. */
+export function draftProblem(d: any): string | undefined {
+  if (!d || typeof d.title !== "string" || !d.title.trim()) return "Give the request a title.";
+  if (d.category !== "Hobby" && d.category !== "Needs") return "Pick Hobby or Needs.";
+  const auto = Number(d.autoUsd), max = Number(d.maxUsd), dl = Date.parse(d.deadline);
+  if (!(auto > 0) || !(max > 0)) return "Both amounts must be above $0.";
+  if (auto > max) return `"Buys on its own" (${usd(auto)}) can't be above "asks you up to" (${usd(max)}).`;
+  if (!Number.isFinite(dl) || dl <= Date.now()) return "The arrival date must be in the future.";
+}
+const errText = (e: any) => String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 200);
+
+/** Answers at once with the new request (status watching, `preparing` set); everything slow runs in setupRequest. */
+function createRequest(d: Draft, a: Account | undefined, deps: Deps): Req {
   const ctx = ctxOf(a);
   const id = randomUUID().slice(0, 8);
   const slug = `${d.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20)}-${id.slice(0, 4)}`; // unique ENS label
-  const min = 0.5 * d.autoUsd; // cheaper than half the auto limit: an accessory, not the product
-  const found = await deps.searchProducts(d.query, { minPriceUsd: min, maxPriceUsd: d.maxUsd * 1.15 }).catch(() => []);
-  const offers = await compareStores(d.query, found, { minPriceUsd: min }).catch(() => []);
-  const current = offers[0] ? offers[0].priceMinor / 100 : d.maxUsd * 1.05;
   const r: Req = {
-    ...d, acct: a?.key, ctx, id, ensName: `${slug}.${d.category.toLowerCase()}.${ctx.root}`, status: "watching", currentPrice: current,
-    priceHistory: history(id, current), historyModeled: true, // synthetic, seeded around the live price
-    events: EVENTS.map((e) => ({ date: iso(e.date), name: e.name })),
-    activity: [],
+    ...d, acct: a?.key, ctx, id, ensName: `${slug}.${d.category.toLowerCase()}.${ctx.root}`, status: "watching", currentPrice: d.maxUsd,
+    priceHistory: [], historyModeled: true, events: EVENTS.map((e) => ({ date: iso(e.date), name: e.name })),
+    activity: [], preparing: "Comparing stores",
   };
-  setOffers(r, offers);
-  const tx = await writePolicy(r).catch((e) => void console.error("writePolicy", e?.shortMessage ?? e));
-  const row: Req["activity"][number] = { date: iso(Date.now()), text: `Policy ${tx ? "written to ENS (confirming)" : "saved (demo, no chain)"}: ${r.ensName} auto ${usd(d.autoUsd)}, max ${usd(d.maxUsd)}`, txHash: tx };
-  r.activity.push(row);
-  const log = (what: string) => (e: any) => void console.error(what, r.ensName, e?.shortMessage ?? e?.message ?? e);
-  const policy = tx && mined(tx, "policy").then(
-    () => void (row.text = row.text.replace(" (confirming)", "")),
-    (e) => { log("writePolicy")(e); Object.assign(row, { text: `Policy write failed on chain: ${r.ensName}`, blocked: true }); },
-  );
-  // the name itself and the text mirror: sent in the background, a failure is only logged (the contract reads the data records)
-  const named = registerRequest(r).then((h) => void (h && r.activity.push({ date: iso(Date.now()), text: `Registered ${r.ensName} in ENS until ${r.deadline.slice(0, 10)}`, txHash: h })), log("register"));
-  void writeTexts(r).catch(log("policy texts"));
-  if (tx) policyTxs.set(r.id, Promise.all([policy, named]).then(() => { policyTxs.delete(r.id); persist(); }));
-  if (offers.length) r.activity.push({ date: iso(Date.now()), text: `Compared ${offers.length} stores via Monid (${sources(offers)}): best ${usd(current)} at ${r.merchant}` });
   requests.set(id, r);
-  if (current <= d.autoUsd) await onPrice(r, current, deps); // already in the auto band: the agent acts now
-  await strategize(r);
+  persist();
+  void setupRequest(r, deps).catch((e) => {
+    console.error("setup", r.ensName, e);
+    r.setupError = `Setup stopped: ${errText(e)}`;
+    r.activity.push({ date: iso(Date.now()), text: r.setupError, blocked: true });
+  }).finally(() => { r.preparing = undefined; persist(); });
   return r;
+}
+
+/** Live listings -> store comparison, in parallel with the policy tx (broadcast, not awaited) -> an auto-band buy if already cheap
+ *  enough -> strategy. Every failure lands in the request's activity in words; none is swallowed. */
+async function setupRequest(r: Req, deps: Deps) {
+  const log = (what: string) => (e: any) => void console.error(what, r.ensName, errText(e));
+  const note = (text: string, blocked = false, txHash?: Hex) => { r.activity.push({ date: iso(Date.now()), text, txHash, ...(blocked && { blocked }) }); persist(); };
+  const min = 0.5 * r.autoUsd; // cheaper than half the auto limit: an accessory, not the product
+  const search = (async () => {
+    const found = await deps.searchProducts(r.query, { minPriceUsd: min, maxPriceUsd: r.maxUsd * 1.15 });
+    return compareStores(r.query, found, { minPriceUsd: min });
+  })().catch((e) => { note(`Store search failed (Monid): ${errText(e)}. Watching with your max as the reference.`, true); return [] as Awaited<ReturnType<typeof compareStores>>; });
+
+  const policy = (async () => {
+    let tx: Hex | undefined;
+    try { tx = await writePolicy(r); } catch (e) { return note(`Could not write your rules to ENS: ${errText(e)}. Proviso won't buy until they are on chain.`, true); }
+    const row: Req["activity"][number] = { date: iso(Date.now()), text: `Policy ${tx ? "written to ENS (confirming)" : "saved (demo, no chain)"}: ${r.ensName} auto ${usd(r.autoUsd)}, max ${usd(r.maxUsd)}`, txHash: tx };
+    r.activity.push(row);
+    if (!tx) return;
+    const mine = mined(tx, "policy").then(
+      () => void (row.text = row.text.replace(" (confirming)", "")),
+      (e) => { log("writePolicy")(e); Object.assign(row, { text: `Policy tx reverted on chain: ${r.ensName} (${errText(e)})`, blocked: true }); },
+    );
+    // the name itself and the text mirror: a failure is reported but never blocks a buy (the contract reads the data records)
+    const named = registerRequest(r).then(
+      (h) => void (h && note(`Registered ${r.ensName} in ENS until ${r.deadline.slice(0, 10)}`, false, h)),
+      (e) => note(`Could not register ${r.ensName} (the rules still apply): ${errText(e)}`, true),
+    );
+    void writeTexts(r).catch(log("policy texts"));
+    policyTxs.set(r.id, Promise.all([mine, named]).then(() => { policyTxs.delete(r.id); persist(); }));
+  })();
+
+  const offers = await search;
+  const current = offers[0] ? offers[0].priceMinor / 100 : r.maxUsd * 1.05;
+  Object.assign(r, { currentPrice: current, priceHistory: history(r.id, current) });
+  setOffers(r, offers);
+  if (offers.length) note(`Compared ${offers.length} stores via Monid (${sources(offers)}): best ${usd(current)} at ${r.merchant}`);
+  else if (!r.activity.some((x) => x.blocked)) note(`No live listing for "${r.query}" between ${usd(min)} and ${usd(r.maxUsd * 1.15)} yet. Watching with your max as the reference.`);
+  r.preparing = "Writing your rules to ENS";
+  await policy;
+  r.preparing = "Planning when to buy";
+  if (current <= r.autoUsd) await onPrice(r, current, deps); // already in the auto band: the agent acts now
+  await strategize(r).catch((e) => note(`Could not plan the timing (AI): ${errText(e)}. Proviso still buys inside your rules.`, true));
 }
 
 export function mountHero(app: Express, deps: Deps) {
@@ -1240,10 +1286,14 @@ export function mountHero(app: Express, deps: Deps) {
   // Double taps / retries: the same account posting an identical draft while it is being created or up to 60 s after gets that request.
   app.post("/api/requests", async (req, res) => {
     const d: Draft = req.body, a = acctOf(res), key = JSON.stringify([a?.key, d?.title, d?.autoUsd, d?.maxUsd, d?.deadline]);
+    const problem = draftProblem(d);
+    if (problem) return res.status(400).json({ error: "bad_draft", message: problem });
+    if (a?.mode === "wallet" && (await walletStatus(a)) !== "ready")
+      return res.status(409).json({ error: "wallet_not_ready", message: "Your wallet setup is still finishing on Sepolia. Try again in a few seconds." });
     for (const [k, c] of creating) if (Date.now() > c.until) creating.delete(k);
     let c = creating.get(key);
     if (!c) {
-      const entry = { acct: a?.key, p: createRequest(d, a, deps), until: Infinity };
+      const entry = { acct: a?.key, p: Promise.resolve(createRequest(d, a, deps)), until: Infinity };
       entry.p.then(() => void (entry.until = Date.now() + 60_000), () => void creating.delete(key));
       creating.set(key, (c = entry));
     }
@@ -1260,6 +1310,7 @@ export function mountHero(app: Express, deps: Deps) {
   app.post("/api/requests/:id/price", async (req, res) => {
     const r = mine(res, requests.get(req.params.id));
     if (!r) return res.status(404).end();
+    if (r.preparing) return res.status(409).json({ error: "preparing", message: `Proviso is still setting this request up (${r.preparing.toLowerCase()}). Try again in a few seconds.` });
     await onPrice(r, Number(req.body?.price), deps);
     await strategize(r);
     res.json(requestView(r));
@@ -1269,6 +1320,7 @@ export function mountHero(app: Express, deps: Deps) {
   app.post("/api/requests/:id/demo", async (req, res) => {
     const r = mine(res, requests.get(req.params.id));
     if (!r) return res.status(404).end();
+    if (r.preparing) return res.status(409).json({ error: "preparing", message: `Proviso is still setting this request up (${r.preparing.toLowerCase()}). Try again in a few seconds.` });
     const s = req.body?.scenario;
     if (s === "reset") {
       for (const [id, a] of approvals) if (a.requestId === r.id && (a.status === "pending" || a.status === "approved")) approvals.delete(id);

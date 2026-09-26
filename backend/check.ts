@@ -357,7 +357,12 @@ assert.equal((await get("/api/me", mallory)).status, 401);
 assert.equal(JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"))[`${ISS}|mallory-sub`], undefined);
 assert.ok(!readFileSync(join(stateDir, ".state.json"), "utf8").includes(dup[2]));
 assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]); // other accounts untouched
-const { mergeDraft, statusLine } = await import("./hero.js");
+const { mergeDraft, statusLine, draftProblem } = await import("./hero.js");
+const okDraft = { title: "TV", category: "Hobby", autoUsd: 400, maxUsd: 500, deadline: new Date(Date.now() + 86_400_000).toISOString() };
+assert.equal(draftProblem(okDraft), undefined);
+assert.match(draftProblem({ ...okDraft, autoUsd: 600 })!, /can't be above/);
+assert.match(draftProblem({ ...okDraft, deadline: "2020-01-01T00:00:00Z" })!, /future/);
+assert.match(draftProblem({ ...okDraft, category: "Toys" })!, /Hobby or Needs/);
 const sr = { status: "watching", currentPrice: 170, autoUsd: 150, activity: [] as any[] } as any;
 assert.equal(statusLine(sr), "watching: $170 now, buys on its own at $150 or less");
 assert.equal(statusLine({ ...sr, activity: [{ text: "Above your $300 max at $320 — not bought", blocked: true }] }), "watching; last attempt blocked: Above your $300 max at $320 — not bought");
