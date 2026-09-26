@@ -33,7 +33,7 @@ enum MockData {
         query: "I want a Sony 55\" TV, must arrive within 1 month, never above $500, buy on your own under $400",
         imageUrl: nil,
         category: "Hobby",
-        ensName: "sony-tv.hobby.alice.eth",
+        ensName: "sony-tv.hobby.alice.proviso.eth",
         autoUsd: 400,
         maxUsd: 500,
         deadline: daysFromNow(28),
@@ -79,7 +79,7 @@ enum MockData {
         query: "Grab a PS5 disc edition, must arrive in 2 weeks, max $500, auto-buy under $400",
         imageUrl: nil,
         category: "Hobby",
-        ensName: "ps5.hobby.alice.eth",
+        ensName: "ps5.hobby.alice.proviso.eth",
         autoUsd: 400,
         maxUsd: 500,
         deadline: daysFromNow(12),
@@ -121,7 +121,7 @@ enum MockData {
         query: "Buy the LEGO Millennium Falcon set whenever it drops under $650",
         imageUrl: nil,
         category: "Hobby",
-        ensName: "lego-falcon.hobby.alice.eth",
+        ensName: "lego-falcon.hobby.alice.proviso.eth",
         autoUsd: 650,
         maxUsd: 700,
         deadline: daysAgo(-2),
@@ -189,7 +189,7 @@ enum MockData {
         query: "Get me a Switch 2 within budget, deadline was last week",
         imageUrl: nil,
         category: "Needs",
-        ensName: "switch2.needs.alice.eth",
+        ensName: "switch2.needs.alice.proviso.eth",
         autoUsd: 350,
         maxUsd: 400,
         deadline: daysAgo(4),
@@ -238,7 +238,7 @@ enum MockData {
 
     static let hobbyCategory = Category(
         name: "Hobby",
-        ensName: "hobby.alice.eth",
+        ensName: "hobby.alice.proviso.eth",
         limitUsd: 1000,
         spentUsd: 700,
         pct: nil,
@@ -247,7 +247,7 @@ enum MockData {
 
     static let needsCategory = Category(
         name: "Needs",
-        ensName: "needs.alice.eth",
+        ensName: "needs.alice.proviso.eth",
         limitUsd: 3000,
         spentUsd: 1150,
         pct: 0.1,
@@ -256,7 +256,7 @@ enum MockData {
 
     static let wallet = Wallet(
         address: "0x8f3CfA1c2B4d5E6f7A8b9C0d1E2f3A4b5C6d7E8f",
-        ensRoot: "alice.eth",
+        ensRoot: "alice.proviso.eth",
         usdcBalance: 8420,
         allowance: 5000,
         agent: "0x0Agent1234567890AbCdEf1234567890AbCdEf12"
@@ -309,7 +309,7 @@ actor MockAPI: API {
             query: draft.query,
             imageUrl: nil,
             category: draft.category,
-            ensName: "\(draft.title.lowercased().replacingOccurrences(of: " ", with: "-")).\(draft.category.lowercased()).alice.eth",
+            ensName: "\(draft.title.lowercased().replacingOccurrences(of: " ", with: "-")).\(draft.category.lowercased()).alice.proviso.eth",
             autoUsd: draft.autoUsd,
             maxUsd: draft.maxUsd,
             deadline: draft.deadline,

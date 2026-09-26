@@ -19,7 +19,7 @@ struct WalletSetupView: View {
 
     private var previewName: String {
         let cleaned = Self.sanitize(handle)
-        return cleaned.isEmpty ? "you.herodemo.eth" : "\(cleaned).herodemo.eth"
+        return cleaned.isEmpty ? "you.proviso.eth" : "\(cleaned).proviso.eth"
     }
 
     var body: some View {

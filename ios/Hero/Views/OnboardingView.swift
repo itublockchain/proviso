@@ -341,7 +341,7 @@ private struct PolicyChipIllustration: View {
                 StatusDot(color: Theme.accentAmber, label: "Ask")
                 StatusDot(color: Theme.textSecondary, label: "Never")
             }
-            OnboardingChip("ps5.hobby.herodemo.eth")
+            OnboardingChip("ps5.hobby.alice.proviso.eth")
         }
         .scaleEffect(appeared ? 1 : 0.85)
         .opacity(appeared ? 1 : 0)
