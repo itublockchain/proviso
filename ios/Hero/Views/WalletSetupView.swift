@@ -64,16 +64,16 @@ struct WalletSetupView: View {
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.center)
-                    Text("Hero shops from your own wallet — no deposits. You'll sign three things in MetaMask:")
+                    Text("One signature in MetaMask — no gas, no waiting. It covers:")
                         .font(.body)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.center)
                 }
 
                 VStack(alignment: .leading, spacing: Theme.spacingS) {
-                    stepRow("Let Hero's contract spend, only within your rules")
-                    stepRow("Point it to your rules on your ENS name")
-                    stepRow("Lock bigger buys to your World ID")
+                    stepRow("Hero's contract may spend from your wallet — no deposits")
+                    stepRow("Only within your rules, which live at \(previewName)")
+                    stepRow("Bigger buys need your World ID")
                 }
                 .padding(.top, Theme.spacingS)
 
