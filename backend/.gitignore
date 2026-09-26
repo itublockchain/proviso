@@ -2,3 +2,4 @@
 node_modules/
 .world-owner.json
 .sessions.json
+.accounts.json

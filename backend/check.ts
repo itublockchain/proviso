@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashTypedData, keccak256, stringToBytes } from "viem";
@@ -135,20 +135,23 @@ await assert.rejects(redeemLogin(att, "code-2", CB), /nonce mismatch/);
 codeClaims = {}; // nonce missing from the token
 await assert.rejects(redeemLogin(att, "code-3", CB), /nonce mismatch/);
 
-// --- the same flow over HTTP, plus the session middleware (temp state dir: never touches the real owner/sessions files) ---
+// --- the same flow over HTTP, plus the session middleware (temp state dir: never touches the real accounts/sessions files) ---
 process.env.HERO_STATE_DIR = mkdtempSync(join(tmpdir(), "hero-check-"));
+writeFileSync(join(process.env.HERO_STATE_DIR, ".world-owner.json"), JSON.stringify({ iss: ISS, sub: "legacy-sub" })); // pre-accounts single owner
 process.env.PUBLIC_URL = "https://hero.test/";
 delete process.env.HERO_REQUIRE_LOGIN;
 const { mountHero } = await import("./hero.js");
 const { default: express } = await import("express");
 const app = express();
 app.use(express.json());
-mountHero(app, {} as any);
+mountHero(app, { searchCatalog: async () => [] } as any);
 const srv = app.listen(0, "127.0.0.1");
 await once(srv, "listening");
 const base = `http://127.0.0.1:${(srv.address() as any).port}`;
 const get = (path: string, token?: string, method = "GET") =>
   fetch(base + path, { method, redirect: "manual", headers: token ? { authorization: `Bearer ${token}` } : {} });
+const post = (path: string, token: string | undefined, body: object, method = "POST") =>
+  fetch(base + path, { method, headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
 const start = async () => {
   const r = await get("/auth/world/start?return=hero");
   assert.equal(r.status, 302);
@@ -172,14 +175,17 @@ assert.deepEqual(await callback({ error: "access_denied", state: sp.get("state")
 assert.deepEqual(await callback({ code: "c", state: sp.get("state")! }), { error: "invalid_state" }); // consumed by the error
 sp = await start();
 codeClaims = { nonce: sp.get("nonce") };
-const { session } = await callback({ code: "c", state: sp.get("state")! }); // first sign-in links the owner
+const { session } = await callback({ code: "c", state: sp.get("state")! }); // sign-in creates alice's account
 assert.match(session, /^[A-Za-z0-9_-]{43}$/);
 const stateDir = process.env.HERO_STATE_DIR;
-assert.equal(JSON.parse(readFileSync(join(stateDir, ".world-owner.json"), "utf8")).sub, "alice-sub");
+const accts = JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"));
+assert.equal(accts[`${ISS}|alice-sub`].mode, "none");
+assert.equal(accts[`${ISS}|legacy-sub`].mode, "demo"); // migrated owner keeps the demo wallet
 assert.ok(!readFileSync(join(stateDir, ".sessions.json"), "utf8").includes(session)); // only the hash is stored
 sp = await start();
 codeClaims = { nonce: sp.get("nonce"), sub: "mallory-sub" };
-assert.deepEqual(await callback({ code: "c", state: sp.get("state")! }), { error: "not_owner" });
+const { session: mallory } = await callback({ code: "c", state: sp.get("state")! }); // any World ID signs in, to its own account
+assert.match(mallory, /^[A-Za-z0-9_-]{43}$/);
 
 let r = await get("/api/budgets");
 assert.equal(r.status, 401);
@@ -192,12 +198,43 @@ assert.equal(me.signedIn, true);
 assert.equal(me.worldLinked, true);
 assert.equal(me.acr, ACR);
 assert.match(me.sub, /^[0-9a-f]{12}$/); // short hash, never the raw pairwise sub
+assert.equal(me.walletStatus, "none");
+
+// requests are per account: the second World ID sees none of the first one's
+const draft = { title: "Lego set", query: "lego", category: "Hobby", autoUsd: 100, maxUsd: 200, deadline: new Date(Date.now() + 30 * 86_400_000).toISOString() };
+const req1 = await (await post("/api/requests", session, draft)).json();
+assert.equal(req1.acct, undefined); // internal owner/context fields never leave the backend
+assert.equal(req1.ctx, undefined);
+assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]);
+assert.deepEqual(await (await get("/api/requests", mallory)).json(), []);
+assert.equal((await get(`/api/requests/${req1.id}`, mallory)).status, 404);
+assert.equal((await post(`/api/requests/${req1.id}/price`, mallory, { price: 1 })).status, 404);
+
+// wallet onboarding: budgets stay editable until the user's resolver exists; handle rules; token-gated page API
+assert.equal((await post("/api/budgets/Hobby", mallory, { limitUsd: 1500 }, "PUT")).status, 200);
+assert.equal((await post("/api/budgets/Hobby", mallory, { limitUsd: -1 }, "PUT")).status, 400);
+assert.equal((await post("/api/budgets/constructor", mallory, { limitUsd: 5 }, "PUT")).status, 404);
+assert.deepEqual((await (await get("/api/budgets", mallory)).json()).categories.map((c: any) => [c.name, c.limitUsd]), [["Hobby", 1500], ["Needs", 3000]]);
+assert.deepEqual((await (await get("/api/budgets", session)).json()).categories.map((c: any) => c.limitUsd), [1000, 3000]); // alice unaffected
+for (const handle of ["Bad Handle", "hobby", "ab", 7]) assert.equal((await post("/api/wallet/start", mallory, { handle })).status, 400);
+assert.equal((await post("/api/wallet/start", mallory, { limits: { toString: 5 } })).status, 400);
+const ws = await (await post("/api/wallet/start", mallory, { handle: "mallory" })).json();
+const tok = new URL(ws.pageUrl).pathname.split("/").pop();
+assert.deepEqual(ws, { url: `https://link.metamask.io/dapp/hero.test/w/${tok}`, pageUrl: `https://hero.test/w/${tok}`, ensName: "mallory.alice.eth" });
+assert.match((await get(`/w/${tok}`)).headers.get("content-type")!, /^text\/html/);
+assert.deepEqual(await (await get(`/w/${tok}/status`)).json(),
+  { funded: false, done: { approve: false, account: false, continuity: false }, ready: false, ensName: "mallory.alice.eth", address: "" });
+assert.equal((await get("/w/not-a-token/status")).status, 404);
+assert.equal((await post(`/w/${tok}/connect`, undefined, { address: "0x0000000000000000000000000000000000000001" })).status, 503); // no chain here
+assert.equal((await (await post("/api/wallet/demo", mallory, {})).json()).walletStatus, "demo");
 assert.equal((await get("/api/logout", session, "POST")).status, 200);
 assert.equal((await get("/api/me", session)).status, 401); // logged out
 process.env.HERO_REQUIRE_LOGIN = "0";
 r = await get("/api/me");
 assert.equal(r.status, 200);
-assert.equal((await r.json()).signedIn, false);
+const anon = await r.json();
+assert.equal(anon.signedIn, false);
+assert.equal(anon.walletStatus, "demo");
 srv.close();
 srv.closeAllConnections();
 
