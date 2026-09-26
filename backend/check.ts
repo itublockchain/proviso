@@ -241,6 +241,11 @@ assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: an
 assert.deepEqual(await (await get("/api/requests", mallory)).json(), []);
 assert.equal((await get(`/api/requests/${req1.id}`, mallory)).status, 404);
 assert.equal((await post(`/api/requests/${req1.id}/price`, mallory, { price: 1 })).status, 404);
+// double taps: an identical draft from the same account (concurrent, or within 60 s) is the same request; another account gets its own
+const dup = await Promise.all([session, session, mallory].map(async (t) => (await (await post("/api/requests", t, draft)).json()).id));
+assert.deepEqual(dup.slice(0, 2), [req1.id, req1.id]);
+assert.notEqual(dup[2], req1.id);
+assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]);
 
 // hidden demo lever: band math lands every scenario in its own band
 for (const [cur, auto, max] of [[439, 400, 500], [210, 100, 200], [80, 100, 200], [12, 10, 11], [5, 1, 3], [400.5, 400, 401]]) {

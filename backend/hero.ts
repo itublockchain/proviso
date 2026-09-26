@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   createPublicClient, createWalletClient, encodeAbiParameters, encodeFunctionData, getAddress, http, isAddressEqual, keccak256, namehash, nonceManager,
-  parseAbi, parseAbiParameters, parseEventLogs, parseSignature, stringToBytes, toHex, verifyTypedData, zeroHash, type Hex, type PrivateKeyAccount, type WalletClient,
+  parseAbi, parseAbiParameters, parseEventLogs, parseSignature, stringToBytes, toHex, verifyTypedData, zeroHash, type Hex, type PrivateKeyAccount,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
@@ -367,36 +367,41 @@ async function sendBuyApproved(order: ReturnType<typeof makeOrder>, authTime: nu
 const signers = new Map<Hex, PrivateKeyAccount>();
 const signer = (k: Hex) => signers.get(k) ?? signers.set(k, privateKeyToAccount(k, { nonceManager })).get(k)!;
 
-/** Gas is estimated before the nonce manager hands out a nonce, so a revert never burns a nonce. */
-async function send(key: Hex, address: Hex, abi: any, functionName: string, args: any[]): Promise<Hex> {
+/** Sends and waits until mined. */
+const send = async (key: Hex, address: Hex, abi: any, functionName: string, args: any[]) => mined(await submit(key, address, abi, functionName, args), functionName);
+
+/** Estimates, signs and broadcasts; resolves with the hash without waiting for the receipt.
+ *  Gas is estimated before the nonce manager hands out a nonce, so a revert never burns a nonce. */
+async function submit(key: Hex, address: Hex, abi: any, functionName: string, args: any[]): Promise<Hex> {
   const account = signer(key);
   const gas = await pub.estimateContractGas({ account: account.address, address, abi, functionName, args } as any);
-  return broadcast(account, functionName, (w) => w.writeContract({ address, abi, functionName, args, gas: (gas * 12n) / 10n } as any));
-}
-
-async function broadcast(account: PrivateKeyAccount, what: string, fn: (w: WalletClient) => Promise<Hex>): Promise<Hex> {
   const wallet = createWalletClient({ account, chain: sepolia, transport: http(CHAIN.rpc) });
-  let hash: Hex;
   try {
-    hash = await fn(wallet);
+    return await wallet.writeContract({ address, abi, functionName, args, gas: (gas * 12n) / 10n } as any);
   } catch (e) {
     account.nonceManager?.reset({ address: account.address, chainId: sepolia.id }); // the consumed nonce was never broadcast
     throw e;
   }
+}
+
+async function mined(hash: Hex, what: string): Promise<Hex> {
   const rc = await pub.waitForTransactionReceipt({ hash });
   if (rc.status !== "success") throw new Error(`${what} reverted: ${hash}`);
   return hash;
 }
 
-/** Operator writes the request's band records on the payer's resolver in one tx (request names resolve via the resolver, not registered). */
+/** Operator writes the request's band records on the payer's resolver in one tx (request names resolve via the resolver, not registered).
+ *  Returns once broadcast; the request's buys wait for it to be mined (policyTxs). */
 async function writePolicy(r: Req): Promise<Hex | undefined> {
   if (!ENS.ownerKey || !r.ctx.resolver) return;
   const deadline = BigInt(Math.floor(Date.parse(r.deadline) / 1000));
   const name = dnsEncode(r.ensName);
   const calls = ([["auto", BigInt(Math.round(r.autoUsd * 1e6))], ["max", BigInt(Math.round(r.maxUsd * 1e6))], ["deadline", deadline]] as const)
     .map(([k, v]) => encodeFunctionData({ abi: ENS_ABI, functionName: "setData", args: [name, k, u256(v)] }));
-  return send(ENS.ownerKey, r.ctx.resolver, ENS_ABI, "multicall", [calls]);
+  return submit(ENS.ownerKey, r.ctx.resolver, ENS_ABI, "multicall", [calls]);
 }
+/** request id -> its policy tx until mined (never rejects); a buy awaits it so the contract sees the records. */
+const policyTxs = new Map<string, Promise<void>>();
 
 /** The agent's only ENS write right: the `status` text record. */
 async function agentStatus(r: Req, status: string) {
@@ -652,6 +657,7 @@ async function onPrice(r: Req, price: number, deps: Deps, payTo?: Hex) {
   if (price <= r.autoUsd) {
     let tx: Hex | undefined;
     try {
+      await policyTxs.get(r.id);
       tx = await sendBuy(order);
     } catch (e: any) {
       // Only a mined-and-reverted tx has a hash (broadcast throws "<fn> reverted: <hash>"); a pre-flight revert's
@@ -731,6 +737,7 @@ async function refreshApproval(a: Approval, deps: Deps) {
   try {
     const acct = accounts.get(r.ctx.acct ?? "");
     if (a.device && r.ctx.demo && acct) await syncDemoContinuity(acct); // shared demo wallet: point it at this approver first
+    await policyTxs.get(r.id);
     a.txHash = a.device ? await sendBuyApproved(a.order, a.authTime!, a.continuity) : await sendBuy(a.order, a.proof);
     a.status = "paid";
     markBought(r, a.price, a.txHash, true);
@@ -799,6 +806,39 @@ const limitsOpen = async (a: Account) => !(a.provisioned || a.permit || (a.mode 
 // ponytail: walletPage.ts is owned by the page agent; variable specifier so a missing file never breaks startup or tsc.
 const PAGE = "./walletPage.js";
 const walletPage = () => import(PAGE).then((m) => String(m.walletPageHtml), () => "<!doctype html><title>Hero</title><p>Wallet setup page is not deployed yet.</p>");
+
+/** Draft key (account + title + bands + deadline) -> the request being created, kept until 60 s after it exists. */
+const creating = new Map<string, { acct?: string; p: Promise<Req>; until: number }>();
+
+/** Live listings -> store comparison -> policy tx (broadcast, not awaited) -> an auto-band buy if already cheap enough -> strategy. */
+async function createRequest(d: Draft, a: Account | undefined, deps: Deps): Promise<Req> {
+  const ctx = ctxOf(a);
+  const id = randomUUID().slice(0, 8);
+  const slug = `${d.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20)}-${id.slice(0, 4)}`; // unique ENS label
+  const min = 0.5 * d.autoUsd; // cheaper than half the auto limit: an accessory, not the product
+  const found = await deps.searchProducts(d.query, { minPriceUsd: min, maxPriceUsd: d.maxUsd * 1.15 }).catch(() => []);
+  const offers = await compareStores(d.query, found, { minPriceUsd: min }).catch(() => []);
+  const current = offers[0] ? offers[0].priceMinor / 100 : d.maxUsd * 1.05;
+  const r: Req = {
+    ...d, acct: a?.key, ctx, id, ensName: `${slug}.${d.category.toLowerCase()}.${ctx.root}`, status: "watching", currentPrice: current,
+    priceHistory: history(id, current), historyModeled: true, // synthetic, seeded around the live price
+    events: EVENTS.map((e) => ({ date: iso(e.date), name: e.name })),
+    activity: [],
+  };
+  setOffers(r, offers);
+  const tx = await writePolicy(r).catch((e) => void console.error("writePolicy", e?.shortMessage ?? e));
+  const row: Req["activity"][number] = { date: iso(Date.now()), text: `Policy ${tx ? "written to ENS (confirming)" : "saved (demo, no chain)"}: ${r.ensName} auto ${usd(d.autoUsd)}, max ${usd(d.maxUsd)}`, txHash: tx };
+  r.activity.push(row);
+  if (tx) policyTxs.set(r.id, mined(tx, "policy").then(
+    () => void (row.text = row.text.replace(" (confirming)", "")),
+    (e) => { console.error("writePolicy", e?.shortMessage ?? e?.message ?? e); Object.assign(row, { text: `Policy write failed on chain: ${r.ensName}`, blocked: true }); },
+  ).finally(() => { policyTxs.delete(r.id); persist(); }));
+  if (offers.length) r.activity.push({ date: iso(Date.now()), text: `Compared ${offers.length} stores via Monid (${sources(offers)}): best ${usd(current)} at ${r.merchant}` });
+  requests.set(id, r);
+  if (current <= d.autoUsd) await onPrice(r, current, deps); // already in the auto band: the agent acts now
+  await strategize(r);
+  return r;
+}
 
 export function mountHero(app: Express, deps: Deps) {
   // Sign in with World ID (authorization code + PKCE). Every World ID gets its own account.
@@ -982,29 +1022,17 @@ export function mountHero(app: Express, deps: Deps) {
     });
   });
 
+  // Double taps / retries: the same account posting an identical draft while it is being created or up to 60 s after gets that request.
   app.post("/api/requests", async (req, res) => {
-    const d: Draft = req.body;
-    const a = acctOf(res), ctx = ctxOf(a);
-    const id = randomUUID().slice(0, 8);
-    const slug = `${d.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20)}-${id.slice(0, 4)}`; // unique ENS label
-    const min = 0.5 * d.autoUsd; // cheaper than half the auto limit: an accessory, not the product
-    const found = await deps.searchProducts(d.query, { minPriceUsd: min, maxPriceUsd: d.maxUsd * 1.15 }).catch(() => []);
-    const offers = await compareStores(d.query, found, { minPriceUsd: min }).catch(() => []);
-    const current = offers[0] ? offers[0].priceMinor / 100 : d.maxUsd * 1.05;
-    const r: Req = {
-      ...d, acct: a?.key, ctx, id, ensName: `${slug}.${d.category.toLowerCase()}.${ctx.root}`, status: "watching", currentPrice: current,
-      priceHistory: history(id, current), historyModeled: true, // synthetic, seeded around the live price
-      events: EVENTS.map((e) => ({ date: iso(e.date), name: e.name })),
-      activity: [],
-    };
-    setOffers(r, offers);
-    const tx = await writePolicy(r).catch((e) => void console.error("writePolicy", e?.shortMessage ?? e));
-    r.activity.push({ date: iso(Date.now()), text: `Policy ${tx ? "written to ENS" : "saved (demo, no chain)"}: ${r.ensName} auto ${usd(d.autoUsd)}, max ${usd(d.maxUsd)}`, txHash: tx });
-    if (offers.length) r.activity.push({ date: iso(Date.now()), text: `Compared ${offers.length} stores via Monid (${sources(offers)}): best ${usd(current)} at ${r.merchant}` });
-    requests.set(id, r);
-    if (current <= d.autoUsd) await onPrice(r, current, deps); // already in the auto band: the agent acts now
-    await strategize(r);
-    res.json(requestView(r));
+    const d: Draft = req.body, a = acctOf(res), key = JSON.stringify([a?.key, d?.title, d?.autoUsd, d?.maxUsd, d?.deadline]);
+    for (const [k, c] of creating) if (Date.now() > c.until) creating.delete(k);
+    let c = creating.get(key);
+    if (!c) {
+      const entry = { acct: a?.key, p: createRequest(d, a, deps), until: Infinity };
+      entry.p.then(() => void (entry.until = Date.now() + 60_000), () => void creating.delete(key));
+      creating.set(key, (c = entry));
+    }
+    res.json(requestView(await c.p));
   });
 
   app.get("/api/requests", (_req, res) => res.json([...requests.values()].filter((r) => mine(res, r)).reverse().map(requestView)));

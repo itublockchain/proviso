@@ -32,6 +32,7 @@ type Opts = { minPriceUsd?: number; maxPriceUsd?: number; country?: "US"; fresh?
 
 const API = "https://api.monid.ai/v1";
 const WAIT = 12_000; // how long a request waits per source; a slower run still finishes and fills the cache
+const AMAZON_WAIT = 6_000; // Amazon (async, ~19 s) only gets this long once Google Shopping has offers
 const TTL = 6 * 3600_000;
 const MAX_CALLS = 200; // spend guard per process (worst case ~$1.5)
 const DONE = ["COMPLETED", "FAILED", "BLOCKED", "STOPPED", "TIMED_OUT"];
@@ -150,15 +151,17 @@ const amazon = (q: string, country: string, fresh: boolean) => cached<Offer[]>(`
 
 /** Live listings for a query from Google Shopping (many stores) and Amazon, merged, filtered and ranked (see `rank`). */
 export async function searchProducts(query: string, { minPriceUsd = 0, maxPriceUsd = Infinity, country = "US", fresh = false }: Opts = {}): Promise<Offer[]> {
-  const q = query.trim();
-  const [g, a] = await Promise.all([
+  const q = query.trim(), t0 = Date.now(), am = amazon(q, country, fresh);
+  const [g, early] = await Promise.all([
     within(google(q, country, fresh).then((g) => { // open the likely pick's stores now, while Amazon still runs (compareStores finds it in flight)
       const top = rank(q, g, minPriceUsd, maxPriceUsd).find((o) => o.product);
       if (top) storeRows(top.product!, fresh).catch(() => {});
       return g;
     })),
-    within(amazon(q, country, fresh)),
+    within(am, AMAZON_WAIT),
   ]);
+  // with Google offers: take Amazon only if it is already done; without: Amazon gets the full wait
+  const a = early ?? (await within(am, g?.length ? 0 : Math.max(0, WAIT - (Date.now() - t0))));
   return rank(q, [...(g ?? []), ...(a ?? [])], minPriceUsd, maxPriceUsd);
 }
 
