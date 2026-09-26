@@ -185,7 +185,7 @@ const get = (path: string, token?: string, method = "GET") =>
 const post = (path: string, token: string | undefined, body: object, method = "POST") =>
   fetch(base + path, { method, headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
 const start = async () => {
-  const r = await get("/auth/world/start?return=hero");
+  const r = await get("/auth/world/start?return=proviso");
   assert.equal(r.status, 302);
   return new URL(r.headers.get("location")!).searchParams;
 };
@@ -193,7 +193,7 @@ const callback = async (q: Record<string, string>) => {
   const r = await get(`/auth/world/callback?${new URLSearchParams(q)}`);
   assert.equal(r.status, 302);
   const to = new URL(r.headers.get("location")!);
-  assert.equal(`${to.protocol}//${to.host}`, "hero://auth");
+  assert.equal(`${to.protocol}//${to.host}`, "proviso://auth");
   return Object.fromEntries(to.searchParams);
 };
 

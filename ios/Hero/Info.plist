@@ -25,7 +25,7 @@
 			<string>com.ethtokyo.hero</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>hero</string>
+				<string>proviso</string>
 			</array>
 		</dict>
 	</array>

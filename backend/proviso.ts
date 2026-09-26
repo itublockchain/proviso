@@ -837,7 +837,7 @@ async function onPrice(r: Req, price: number, deps: Deps, payTo?: Hex) {
     return afterBuy(r, order, tx, false);
   }
   const a: Approval = { id: randomUUID(), requestId: r.id, cartHash: orderHash(order), order, price, status: "pending", expiresAt: Date.now() + 10 * 60_000 };
-  a.returnTo = `hero://approval/${a.id}`;
+  a.returnTo = `proviso://approval/${a.id}`;
   if (oidcEnabled()) {
     // World ID for Agents: a device-grant attempt bound to this order, kept server-side
     try {
@@ -1114,7 +1114,7 @@ export function mountProviso(app: Express, deps: Deps) {
     }
   });
   app.get("/auth/world/callback", async (req, res) => {
-    const back = (q: Record<string, string>) => res.redirect(302, `hero://auth?${new URLSearchParams(q)}`);
+    const back = (q: Record<string, string>) => res.redirect(302, `proviso://auth?${new URLSearchParams(q)}`);
     const q = req.query as Record<string, string | undefined>;
     const a = takeLogin(String(q.state ?? "")); // consumed before anything else: state is single-use
     if (q.error) return back({ error: String(q.error).replace(/[^a-z0-9_]/g, "").slice(0, 64) || "access_denied" });

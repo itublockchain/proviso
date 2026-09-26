@@ -28,18 +28,18 @@ enum WorldSignInError: LocalizedError {
 }
 
 /// Runs `<backend>/auth/world/start` in an ASWebAuthenticationSession and resolves with the
-/// opaque session token carried back on `hero://auth?session=...` (or throws on `?error=...`).
+/// opaque session token carried back on `proviso://auth?session=...` (or throws on `?error=...`).
 @MainActor
 final class WorldSignInController: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
 
     func signIn(backendBase: URL) async throws -> String {
         var components = URLComponents(url: backendBase.appendingPathComponent("auth/world/start"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "return", value: "hero")]
+        components.queryItems = [URLQueryItem(name: "return", value: "proviso")]
         let url = components.url!
 
         return try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "hero") { callbackURL, error in
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "proviso") { callbackURL, error in
                 if let error {
                     let nsError = error as NSError
                     if nsError.domain == ASWebAuthenticationSessionErrorDomain,
@@ -91,7 +91,7 @@ final class WorldApprovalPage: NSObject, ASWebAuthenticationPresentationContextP
 
     func open(_ url: URL) {
         session?.cancel()
-        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "hero") { _, _ in }
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "proviso") { _, _ in }
         session.presentationContextProvider = self
         session.prefersEphemeralWebBrowserSession = false
         self.session = session

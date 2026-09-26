@@ -238,7 +238,7 @@ function finish(name) {
 }
 
 go.addEventListener("click", run);
-$("back").addEventListener("click", () => { location.href = "hero://wallet?ok=1"; });
+$("back").addEventListener("click", () => { location.href = "proviso://wallet?ok=1"; });
 $("copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(location.href); $("copy").textContent = "Link copied"; }
   catch { prompt("Copy this link", location.href); }

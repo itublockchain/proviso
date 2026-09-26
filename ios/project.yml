@@ -22,7 +22,7 @@ targets:
         UILaunchScreen: {}
         CFBundleURLTypes:
           - CFBundleURLName: com.ethtokyo.hero
-            CFBundleURLSchemes: [hero]
+            CFBundleURLSchemes: [proviso]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
     settings:

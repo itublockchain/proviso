@@ -25,7 +25,7 @@ struct HeroApp: App {
             try? await store.useDemoWallet()
         }
         if let idx = args.firstIndex(of: "-uiTestOpenRequest"), idx + 1 < args.count,
-           let url = URL(string: "hero://request/\(args[idx + 1])") {
+           let url = URL(string: "proviso://request/\(args[idx + 1])") {
             store.handleDeepLink(url)
         }
     }

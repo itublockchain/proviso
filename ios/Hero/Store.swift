@@ -191,11 +191,11 @@ final class Store {
         }
     }
 
-    /// hero://approval/<orderId> — World App's `return_to` lands here after the user approves.
-    /// hero://wallet?ok=1 — the MetaMask-hosted setup page's best-effort return after wallet setup.
-    /// hero://request/<id> — jumps straight to a request's detail (used for QA/demo deep links).
+    /// proviso://approval/<orderId> — World App's `return_to` lands here after the user approves.
+    /// proviso://wallet?ok=1 — the MetaMask-hosted setup page's best-effort return after wallet setup.
+    /// proviso://request/<id> — jumps straight to a request's detail (used for QA/demo deep links).
     func handleDeepLink(_ url: URL) {
-        guard url.scheme == "hero" else { return }
+        guard url.scheme == "proviso" else { return }
         switch url.host() {
         case "approval":
             guard !url.lastPathComponent.isEmpty, url.lastPathComponent != "/" else { return }
