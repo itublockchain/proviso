@@ -41,12 +41,16 @@ contract MockWorldID {
     }
 }
 
+bytes32 constant DIGEST_FROM_VIEM = 0xae622ad70332e73a8e692898629dbd94b2fed8db702988a0cfef992aed58da55;
+
 contract PolicySpenderTest is Test {
     MockUSDC usdc = new MockUSDC();
     MockResolver res = new MockResolver();
     MockWorldID world = new MockWorldID();
     PolicySpender ps;
     uint256 constant ALICE_HUMAN = 42;
+    uint256 constant ATTESTER_PK = 0xA77E57;
+    bytes32 constant ALICE_WORLD = keccak256("https://sandbox.auth.world.org|alice-pairwise-sub"); // continuity
 
     address alice = makeAddr("alice");
     address agent = makeAddr("agent");
@@ -60,7 +64,7 @@ contract PolicySpenderTest is Test {
 
     function setUp() public {
         vm.warp(1_790_000_000);
-        ps = new PolicySpender(IERC20(address(usdc)), IWorldID(address(world)), "app_x", "buy", IResolver(address(res)), merchants);
+        ps = new PolicySpender(IERC20(address(usdc)), IWorldID(address(world)), "app_x", "buy", IResolver(address(res)), merchants, vm.addr(ATTESTER_PK));
         res.set(merchants, vm.toLowercase(vm.toString(shop)), 1);
 
         res.set(hobby, "limit", 1000e6);
@@ -75,6 +79,7 @@ contract PolicySpenderTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(ps), type(uint256).max);
         ps.setAccount(nh("alice.eth"), address(res), agent, ALICE_HUMAN);
+        ps.setContinuity(ALICE_WORLD);
         vm.stopPrank();
     }
 
@@ -171,7 +176,86 @@ contract PolicySpenderTest is Test {
         expectBuyRevert(order(ps5, shop, 101e6), noProof(), PolicySpender.Expired.selector);
     }
 
+    // --- buyApproved: World ID for Agents approval signed by the backend attester ---
+
+    function test_approvedMidBandBuys() public {
+        PolicySpender.Order memory o = order(ps5, shop, 450e6);
+        uint64 t = uint64(block.timestamp - 30);
+        bytes memory sig = approve(ATTESTER_PK, o, ALICE_WORLD, t);
+        PolicySpender.Order memory other = order(ps5, scam, 450e6);
+        expectApprovedRevert(other, t, sig, PolicySpender.BadApproval.selector); // bound to this exact order
+        buyApproved(o, t, sig);
+        assertEq(usdc.balanceOf(shop), 450e6);
+        expectApprovedRevert(o, t, sig, PolicySpender.OrderUsed.selector); // no replay
+    }
+
+    function test_approvedWrongSigner() public {
+        PolicySpender.Order memory o = order(ps5, shop, 450e6);
+        uint64 t = uint64(block.timestamp);
+        expectApprovedRevert(o, t, approve(0xBAD, o, ALICE_WORLD, t), PolicySpender.BadApproval.selector);
+        expectApprovedRevert(o, t, "", PolicySpender.BadApproval.selector);
+        // same signature with s flipped to the high half (malleable twin) is rejected
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ATTESTER_PK, ps.approvalDigest(ps.orderHash(o), ALICE_WORLD, t));
+        bytes32 highS = bytes32(0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141 - uint256(s));
+        expectApprovedRevert(o, t, abi.encodePacked(r, highS, v == 27 ? uint8(28) : uint8(27)), PolicySpender.BadApproval.selector);
+        buyApproved(o, t, abi.encodePacked(r, s, v));
+    }
+
+    function test_approvedStale() public {
+        PolicySpender.Order memory o = order(ps5, shop, 450e6);
+        uint64 old = uint64(block.timestamp - ps.FRESHNESS() - 1);
+        expectApprovedRevert(o, old, approve(ATTESTER_PK, o, ALICE_WORLD, old), PolicySpender.StaleApproval.selector);
+        uint64 future = uint64(block.timestamp + 61);
+        expectApprovedRevert(o, future, approve(ATTESTER_PK, o, ALICE_WORLD, future), PolicySpender.StaleApproval.selector);
+        uint64 edge = uint64(block.timestamp - ps.FRESHNESS());
+        buyApproved(o, edge, approve(ATTESTER_PK, o, ALICE_WORLD, edge));
+    }
+
+    function test_approvedOnlyOwnersWorldId() public {
+        PolicySpender.Order memory o = order(ps5, shop, 450e6);
+        uint64 t = uint64(block.timestamp);
+        // attester signed for a different World ID subject: does not match alice's continuity
+        bytes32 mallory = keccak256("https://sandbox.auth.world.org|mallory");
+        expectApprovedRevert(o, t, approve(ATTESTER_PK, o, mallory, t), PolicySpender.BadApproval.selector);
+
+        vm.prank(alice);
+        ps.setContinuity(0); // unlinked -> mid band closed, even with a valid signature over 0
+        expectApprovedRevert(o, t, approve(ATTESTER_PK, o, 0, t), PolicySpender.NotOwnerHuman.selector);
+        buyApproved(order(ps5, shop, 399e6), t, ""); // auto band unaffected
+    }
+
+    function test_approvedAutoBandNeedsNoSig() public {
+        buyApproved(order(ps5, shop, 399e6), 0, "");
+        assertEq(usdc.balanceOf(shop), 399e6);
+        expectApprovedRevert(order(ps5, scam, 399e6), 0, "", PolicySpender.UnverifiedMerchant.selector);
+        expectApprovedRevert(order(ps5, shop, 501e6), 0, "", PolicySpender.OverMax.selector);
+        vm.expectRevert(PolicySpender.NotAgent.selector);
+        ps.buyApproved(order(ps5, shop, 100e6), 0, "");
+    }
+
+    /// Same digest as viem hashTypedData in backend/check.ts (chainId 31337, verifyingContract 0x...bEEF).
+    function test_approvalDigestMatchesBackend() public {
+        vm.etch(address(0xbEEF), address(ps).code);
+        bytes32 d = PolicySpender(address(0xbEEF)).approvalDigest(keccak256("order"), ALICE_WORLD, 1_790_000_000);
+        assertEq(d, DIGEST_FROM_VIEM);
+    }
+
     // --- helpers ---
+
+    function approve(uint256 pk, PolicySpender.Order memory o, bytes32 c, uint64 t) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, ps.approvalDigest(ps.orderHash(o), c, t));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function buyApproved(PolicySpender.Order memory o, uint64 t, bytes memory sig) internal {
+        vm.prank(agent);
+        ps.buyApproved(o, t, sig);
+    }
+
+    function expectApprovedRevert(PolicySpender.Order memory o, uint64 t, bytes memory sig, bytes4 err) internal {
+        vm.expectRevert(err);
+        buyApproved(o, t, sig);
+    }
 
     uint256 salt;
 

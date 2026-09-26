@@ -24,6 +24,7 @@ interface IERC20Approve {
 contract ForkTest is Test {
     uint256 alicePk = uint256(keccak256("hero-fork-alice"));
     uint256 opPk = uint256(keccak256("hero-fork-operator"));
+    uint256 attesterPk = uint256(keccak256("hero-fork-attester"));
     address alice = vm.addr(alicePk);
     address agent = makeAddr("agent");
     address shop = makeAddr("shop");
@@ -48,6 +49,7 @@ contract ForkTest is Test {
         vm.setEnv("MERCHANT_REGISTRY", "heroforkshops7.eth");
         vm.setEnv("WORLD_APP_ID", APP_ID);
         vm.setEnv("OWNER_NULLIFIER", vm.toString(HUMAN));
+        vm.setEnv("HERO_ATTESTER", vm.toString(vm.addr(attesterPk)));
         vm.deal(alice, 1 ether);
         vm.deal(vm.addr(opPk), 1 ether);
 
@@ -157,6 +159,23 @@ contract ForkTest is Test {
         // mid band skips the merchant registry: the human approved this exact payTo
     }
 
+    function test_midBandWorldIdForAgents() public {
+        assertEq(ps.attester(), vm.addr(attesterPk));
+        bytes32 world = keccak256("https://sandbox.auth.world.org|fork-alice");
+        PolicySpender.Order memory o = order(ps5, shop, 450e6);
+        uint64 t = uint64(block.timestamp);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attesterPk, ps.approvalDigest(ps.orderHash(o), world, t));
+        vm.prank(agent);
+        vm.expectRevert(PolicySpender.NotOwnerHuman.selector); // owner has not linked a World ID yet
+        ps.buyApproved(o, t, abi.encodePacked(r, s, v));
+
+        vm.prank(alice);
+        ps.setContinuity(world);
+        vm.prank(agent);
+        ps.buyApproved(o, t, abi.encodePacked(r, s, v));
+        assertEq(IERC20(USDC).balanceOf(shop), 450e6);
+    }
+
     // --- helpers ---
 
     uint256 salt;
@@ -185,7 +204,7 @@ contract ForkTest is Test {
 contract ForkWorldTest is Test {
     function test_realProofMatchesContractHashing() public {
         vm.createSelectFork("sepolia", FORK_BLOCK);
-        PolicySpender ps = new PolicySpender(IERC20(USDC), IWorldID(ROUTER), APP_ID, "buy", IResolver(address(0)), "");
+        PolicySpender ps = new PolicySpender(IERC20(USDC), IWorldID(ROUTER), APP_ID, "buy", IResolver(address(0)), "", address(0));
         bytes32 signal = 0xabababababababababababababababababababababababababababababababab;
         assertEq(ps.signalOf(signal), 0x007d3a608bb850f47c2d77d6be73b8f93c94a80264b7bb3cc5c7d2fb54d07ef6);
 
