@@ -107,7 +107,7 @@ struct NewRequestComposerView: View {
         .background(Theme.background.opacity(0.92))
     }
 
-    /// Liquid Glass capsule like Messages/Slack: text grows up to 5 lines, send appears as a prominent glass button.
+    /// Liquid Glass capsule like Messages/Slack: text grows up to 5 lines, send is a prominent glass button enabled once there's text.
     private var inputBar: some View {
         GlassEffectContainer(spacing: 8) {
             HStack(alignment: .bottom, spacing: 8) {
@@ -119,18 +119,16 @@ struct NewRequestComposerView: View {
                     .padding(.horizontal, 18)
                     .padding(.vertical, 12)
                     .glassEffect(.regular.interactive(), in: .capsule)
-                if canSend {
-                    Button(action: send) {
-                        Image(systemName: "arrow.up")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 30, height: 30)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .buttonBorderShape(.circle)
-                    .transition(.scale.combined(with: .opacity))
+                // Always in the layout: inserting it resized the field mid-animation and stuttered.
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 30, height: 30)
                 }
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.circle)
+                .disabled(!canSend)
             }
-            .animation(.spring(duration: 0.3), value: canSend)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)

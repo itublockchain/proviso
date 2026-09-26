@@ -440,13 +440,13 @@ private struct PriceHistoryChart: View {
             }
 
             Chart {
-                RectangleMark(yStart: .value("Zero", 0), yEnd: .value("Auto", request.autoUsd))
+                RectangleMark(yStart: .value("Low", yLow), yEnd: .value("Auto", request.autoUsd))
                     .foregroundStyle(Theme.accentGreen.opacity(0.06))
                 RectangleMark(yStart: .value("Auto", request.autoUsd), yEnd: .value("Max", request.maxUsd))
                     .foregroundStyle(Theme.accentAmber.opacity(0.06))
 
                 ForEach(request.priceHistory) { point in
-                    AreaMark(x: .value("Date", point.date), y: .value("Price", point.price))
+                    AreaMark(x: .value("Date", point.date), yStart: .value("Low", yLow), yEnd: .value("Price", point.price))
                         .foregroundStyle(
                             LinearGradient(
                                 colors: [Theme.accentBlue.opacity(0.16), Theme.accentBlue.opacity(0)],
@@ -475,6 +475,7 @@ private struct PriceHistoryChart: View {
                 }
             }
             .chartYScale(domain: yLow...yHigh)
+            .chartPlotStyle { $0.clipped() } // bands and area stay inside the plot, never over the text below
             .chartXSelection(value: $selectedDate)
             .chartYAxis {
                 AxisMarks(position: .leading) { _ in
