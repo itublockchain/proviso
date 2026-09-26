@@ -22,17 +22,17 @@ interface IERC20Approve {
 
 /// forge test --match-path test/Fork.t.sol   (runs both real scripts against a Sepolia fork)
 contract ForkTest is Test {
-    uint256 alicePk = uint256(keccak256("hero-fork-alice"));
-    uint256 opPk = uint256(keccak256("hero-fork-operator"));
-    uint256 attesterPk = uint256(keccak256("hero-fork-attester"));
+    uint256 alicePk = uint256(keccak256("proviso-fork-alice"));
+    uint256 opPk = uint256(keccak256("proviso-fork-operator"));
+    uint256 attesterPk = uint256(keccak256("proviso-fork-attester"));
     address alice = vm.addr(alicePk);
     address agent = makeAddr("agent");
     address shop = makeAddr("shop");
     address scam = makeAddr("scam");
 
-    bytes hobby = dnsEncode("hobby.heroforkalice7.eth");
-    bytes ps5 = dnsEncode("ps5.hobby.heroforkalice7.eth");
-    bytes lego = dnsEncode("lego.hobby.heroforkalice7.eth");
+    bytes hobby = dnsEncode("hobby.provisoforkalice7.eth");
+    bytes ps5 = dnsEncode("ps5.hobby.provisoforkalice7.eth");
+    bytes lego = dnsEncode("lego.hobby.provisoforkalice7.eth");
 
     PolicySpender ps;
     IPermissionedResolver res;
@@ -44,9 +44,9 @@ contract ForkTest is Test {
         vm.setEnv("OPERATOR_PK", vm.toString(opPk));
         vm.setEnv("AGENT", vm.toString(agent));
         vm.setEnv("MERCHANT", vm.toString(shop));
-        vm.setEnv("ROOT_LABEL", "heroforkalice7");
-        vm.setEnv("MERCHANT_LABEL", "heroforkshops7");
-        vm.setEnv("MERCHANT_REGISTRY", "heroforkshops7.eth");
+        vm.setEnv("ROOT_LABEL", "provisoforkalice7");
+        vm.setEnv("MERCHANT_LABEL", "provisoforkshops7");
+        vm.setEnv("MERCHANT_REGISTRY", "provisoforkshops7.eth");
         vm.setEnv("WORLD_APP_ID", APP_ID);
         vm.setEnv("OWNER_NULLIFIER", vm.toString(HUMAN));
         vm.setEnv("PROVISO_ATTESTER", vm.toString(vm.addr(attesterPk)));
@@ -75,7 +75,7 @@ contract ForkTest is Test {
         assertEq(ps.remaining(hobby, alice), 1000e6);
         (bytes32 root, address r, address a, uint256 human) = ps.accounts(alice);
         assertEq(human, HUMAN);
-        assertEq(root, vm.ensNamehash("heroforkalice7.eth"));
+        assertEq(root, vm.ensNamehash("provisoforkalice7.eth"));
         assertEq(r, address(res));
         assertEq(a, agent);
     }

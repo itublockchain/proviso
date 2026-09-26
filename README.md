@@ -126,7 +126,7 @@ What a reset does: the operator key calls `PolicySpender.resetFor(wallet)` (acco
 
 What the admin (`resetFor`) can and cannot do: it can only switch an account **off**. It cannot set an account, raise a limit, re-enable an agent or spend: after a reset nothing moves until the **owner** signs a fresh `setupWithPermit` (a new permit nonce, so an old signature cannot be replayed). Owners can do the same themselves with `resetAccount()`. The USDC allowance stays but is useless without an account row.
 
-iOS: `cd ios && xcodegen generate && open Hero.xcodeproj`. Settings → turn off demo mode and point the backend URL at your server.
+iOS: `cd ios && xcodegen generate && open Proviso.xcodeproj`. Settings → turn off demo mode and point the backend URL at your server.
 
 ## Honest limits
 

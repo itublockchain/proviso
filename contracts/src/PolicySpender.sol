@@ -75,7 +75,7 @@ contract PolicySpender {
     IResolver public immutable merchantResolver;
     bytes public merchantRegistry; // DNS-encoded name whose `data` records mark verified merchants
     address public immutable attester; // backend key that signs HumanApproval after validating the owner's World ID
-    address public immutable admin; // Hero operator: may only switch accounts off (resetFor)
+    address public immutable admin; // Proviso operator: may only switch accounts off (resetFor)
 
     /// owner => keccak256(iss "|" sub) of the owner's linked World ID for Agents subject; 0 = buyApproved mid band off
     mapping(address => bytes32) public continuity;
@@ -151,7 +151,7 @@ contract PolicySpender {
             | (uint256(keccak256(abi.encode(block.chainid, address(this), owner, root, resolver, agent, continuity_))) >> 1);
     }
 
-    /// Gasless one-signature onboarding: the owner signs only a USDC permit(this, value); anyone (the Hero operator)
+    /// Gasless one-signature onboarding: the owner signs only a USDC permit(this, value); anyone (the Proviso operator)
     /// submits it here. The permit's deadline is setupDeadline(config), so the same signature also authorizes exactly
     /// this account config: change any field and the permit digest no longer recovers the owner. The permit nonce makes
     /// it single-use. Sets accounts[owner] = (root, resolver, agent, human 0) and continuity[owner] = continuity_.
