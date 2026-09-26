@@ -13,42 +13,47 @@ struct ApprovalsListView: View {
     var body: some View {
         @Bindable var store = store
         NavigationStack(path: $store.approvalsPath) {
-            Group {
-                if store.approvals.isEmpty {
-                    ContentUnavailableView(
-                        "No approvals",
-                        systemImage: "checkmark.shield",
-                        description: Text("Purchases above your auto-buy limit will show up here.")
-                    )
-                } else {
-                    List {
-                        if !pending.isEmpty {
-                            Section("Pending") {
-                                ForEach(pending) { approval in
-                                    NavigationLink(value: approval.orderId) {
-                                        ApprovalRow(approval: approval)
+            VStack(spacing: 0) {
+                if store.budgets?.wallet.worldLinked != true {
+                    WorldIDNudgeCard()
+                }
+                Group {
+                    if store.approvals.isEmpty {
+                        ContentUnavailableView(
+                            "No approvals",
+                            systemImage: "checkmark.shield",
+                            description: Text("Purchases above your auto-buy limit will show up here.")
+                        )
+                    } else {
+                        List {
+                            if !pending.isEmpty {
+                                Section("Pending") {
+                                    ForEach(pending) { approval in
+                                        NavigationLink(value: approval.orderId) {
+                                            ApprovalRow(approval: approval)
+                                        }
+                                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(Theme.background)
                                     }
-                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Theme.background)
+                                }
+                            }
+                            if !resolved.isEmpty {
+                                Section("Resolved") {
+                                    ForEach(resolved) { approval in
+                                        NavigationLink(value: approval.orderId) {
+                                            ApprovalRow(approval: approval)
+                                        }
+                                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(Theme.background)
+                                    }
                                 }
                             }
                         }
-                        if !resolved.isEmpty {
-                            Section("Resolved") {
-                                ForEach(resolved) { approval in
-                                    NavigationLink(value: approval.orderId) {
-                                        ApprovalRow(approval: approval)
-                                    }
-                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Theme.background)
-                                }
-                            }
-                        }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
                 }
             }
             .background(Theme.background)
@@ -60,6 +65,22 @@ struct ApprovalsListView: View {
             }
             .refreshable { await store.loadAll() }
         }
+    }
+}
+
+/// Reminder shown when the agent isn't linked to World ID yet — approvals can't be confirmed without it.
+private struct WorldIDNudgeCard: View {
+    var body: some View {
+        HeroCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Link World ID so the agent can ask you for approval on important purchases.")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+                WorldIDLinkRow(worldLinked: false)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
     }
 }
 

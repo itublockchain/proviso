@@ -51,6 +51,8 @@ private struct WalletHeaderCard: View {
                     stat("Allowance", wallet.allowance.usd)
                 }
                 stat("Agent", short(wallet.agent))
+                Divider().overlay(Theme.border)
+                WorldIDLinkRow(worldLinked: wallet.worldLinked ?? false)
             }
         }
     }
