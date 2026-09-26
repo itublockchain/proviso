@@ -12,4 +12,4 @@ match_path = "test/Fork.t.sol"
 no_match_path = "none"
 
 [rpc_endpoints]
-sepolia = "https://sepolia.gateway.tenderly.co"
+sepolia = "${SEPOLIA_RPC_URL}"

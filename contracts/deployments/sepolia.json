@@ -1,0 +1,19 @@
+{
+  "chainId": 11155111,
+  "PolicySpender": "0x3dC4501cE0d266925F8de06ee3a8c0515125f197",
+  "USDC (MockUSDC, open mint)": "0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e",
+  "WorldIDRouter": "0x469449f251692e0779667583026b5a1e99512157",
+  "attester": "0xCD0d0eF44e493EAD7De8C043047C9D324a1776f5",
+  "owner (alice)": "0x73B30b7150D6cFf3EC35EF25a65E4b8625Cf4435",
+  "agent": "0x79bbB630E4Ba04651cF8642697085E7b1f0AD823",
+  "merchant": "0xB4c42772dAeE7E4251bE9dc4782387C9881e6371",
+  "ens": {
+    "root": "herodemo.eth",
+    "rootRegistry": "0x9817e00c0ac5478c60D7Bd0A6E55aee939d11aFa",
+    "resolver": "0x6D200830Fc9dfCc4Dd55B6c80CDE55f35Cc90856",
+    "hobbyRegistry": "0x3481D696ee8C834A5A89a67F851B7739FcFf79De",
+    "needsRegistry": "0xDd4982792C535D0D3cB70B053b4e9f30B44cb3E9",
+    "merchantRegistry": "hero-verified.eth",
+    "merchantResolver": "0x00b83ADcB46f2510B68CFf750105EACF605503F0"
+  }
+}
