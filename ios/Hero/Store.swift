@@ -182,15 +182,33 @@ final class Store {
         switch url.host() {
         case "approval":
             guard !url.lastPathComponent.isEmpty, url.lastPathComponent != "/" else { return }
-            let orderId = url.lastPathComponent
-            selectedTab = 1
-            if approvalsPath.last != orderId { approvalsPath = [orderId] }
-            Task { await refreshApproval(orderId: orderId) }
+            showApproval(url.lastPathComponent)
         case "wallet":
             Task { await loadSession() }
         default:
             break
         }
+    }
+
+    private func showApproval(_ orderId: String) {
+        selectedTab = 1
+        if approvalsPath.last != orderId { approvalsPath = [orderId] }
+        Task { await refreshApproval(orderId: orderId) }
+    }
+
+    /// Hidden stage controls: moves the price into a band (or resets), then shows the result —
+    /// the new pending approval for `.approval`, the updated request otherwise.
+    func demo(requestId: String, scenario: DemoScenario) async throws {
+        let updated = try await run { try await api.demo(requestId: requestId, scenario: scenario) }
+        if let idx = requests.firstIndex(where: { $0.id == requestId }) {
+            withAnimation(.snappy) { requests[idx] = updated }
+        }
+        guard scenario == .approval || scenario == .reset else { return }
+        if let list = try? await api.fetchApprovals() { approvals = list }
+        guard scenario == .approval,
+              let pending = approvals.first(where: { $0.requestId == requestId && $0.status == .pending }) else { return }
+        try? await Task.sleep(for: .seconds(1.2)) // let the price land in the amber band first
+        showApproval(pending.orderId)
     }
 
     func refreshApproval(orderId: String) async {

@@ -44,7 +44,24 @@ struct ActivityEntry: Codable, Identifiable, Hashable {
     var date: Date
     var text: String
     var txHash: String?
+    /// A policy or contract rejection (above max, unverified merchant, …): shown in red.
+    var blocked: Bool? = nil
     var id: String { "\(date.timeIntervalSince1970)-\(text)" }
+}
+
+/// POST api/requests/{id}/demo — hidden stage controls that move the price into a chosen band.
+enum DemoScenario: String, Codable, CaseIterable {
+    case auto, approval, blocked, attack, reset
+
+    var title: String {
+        switch self {
+        case .auto: return "Price drops — buy on its own"
+        case .approval: return "Price in approval range — ask me"
+        case .blocked: return "Price above max — should block"
+        case .attack: return "Attack: swap merchant address"
+        case .reset: return "Reset request"
+        }
+    }
 }
 
 struct Strategy: Codable, Hashable {

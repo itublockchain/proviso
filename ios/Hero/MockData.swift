@@ -380,6 +380,86 @@ actor MockAPI: API {
         if walletStatus == .provisioning { walletStatus = .ready }
     }
 
+    /// Price before the first demo lever pull per request, restored by `.reset`.
+    private var demoFrom: [String: Double] = [:]
+
+    /// Mirrors POST api/requests/{id}/demo: same bands, same activity lines, no chain.
+    func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest {
+        try? await Task.sleep(for: .milliseconds(400))
+        guard let i = requests.firstIndex(where: { $0.id == requestId }) else { throw APIError.badResponse }
+        var r = requests[i]
+        let now = Date()
+        func log(_ text: String, blocked: Bool? = nil, tx: String? = nil) {
+            r.activity.append(ActivityEntry(date: now, text: text, txHash: tx, blocked: blocked))
+        }
+        if scenario == .reset {
+            approvals.removeAll { $0.requestId == requestId && ($0.status == .pending || $0.status == .approved) }
+            r.status = .watching
+            r.boughtAt = nil
+            if let from = demoFrom.removeValue(forKey: requestId) {
+                r.currentPrice = from
+                r.priceHistory.append(PricePoint(date: now, price: from))
+            }
+            log("Demo reset: watching again")
+        } else {
+            guard r.status == .watching else { throw APIError.server("not_watching") }
+            guard let price = Self.demoPrice(scenario, current: r.currentPrice, auto: r.autoUsd, max: r.maxUsd) else {
+                throw APIError.server("no_band")
+            }
+            if demoFrom[requestId] == nil { demoFrom[requestId] = r.currentPrice }
+            r.currentPrice = price
+            r.priceHistory.append(PricePoint(date: now, price: price))
+            switch scenario {
+            case .auto:
+                r.status = .bought
+                r.boughtAt = now
+                r.strategy?.summary = "Price dropped into your auto band, so I bought it on my own."
+                log("Bought for \(price.usd) (auto band)", tx: "0xdemo...\(UUID().uuidString.prefix(6))")
+            case .approval:
+                let code = Self.randomUserCode()
+                approvals.insert(Approval(
+                    orderId: "order-\(UUID().uuidString.prefix(8))", requestId: r.id, title: r.title, imageUrl: r.imageUrl,
+                    merchant: r.merchant ?? "Verified merchant", payTo: "0x000000000000000000000000000000000000dEaD",
+                    price: price, autoUsd: r.autoUsd, maxUsd: r.maxUsd, orderHash: "0x\(UUID().uuidString.prefix(12))",
+                    approvalUrl: "https://sandbox.auth.world.org/device?user_code=\(code)",
+                    expiresAt: now.addingTimeInterval(600), status: .pending, txHash: nil, userCode: code
+                ), at: 0)
+                r.status = .needsApproval
+                r.strategy?.summary = "Price is in your approval band. Waiting for you to confirm with World ID."
+                log("\(price.usd) is above auto \(r.autoUsd.usd): asked you to confirm with World ID (code \(code))")
+            case .blocked:
+                r.strategy?.summary = "Price is above your max. The contract will not let me buy, so I keep watching."
+                log("Above your \(r.maxUsd.usd) max at \(price.usd) — not bought", blocked: true)
+            case .attack:
+                r.strategy?.summary = "A checkout tried to redirect the payment. The contract refused it; still watching."
+                log("Prompt-injected checkout tried to pay 0x…bad1 — blocked by the contract (UnverifiedMerchant), rejected before sending", blocked: true)
+            case .reset:
+                break
+            }
+        }
+        requests[i] = r
+        return r
+    }
+
+    /// Same band math as the backend's `demoPrice`: auto/attack land ≤ auto, approval in (auto, max], blocked > max.
+    static func demoPrice(_ s: DemoScenario, current: Double, auto: Double, max maxUsd: Double) -> Double? {
+        func c(_ x: Double) -> Double { (x * 100).rounded() / 100 }
+        func under(_ x: Double) -> Double { c(x.rounded(.down) - 0.01) } // x.99 strictly below x
+        let mid = (auto + maxUsd) / 2
+        switch s {
+        case .approval:
+            let p = under(mid) > auto ? under(mid) : c(mid)
+            return p > auto && p <= maxUsd ? p : nil
+        case .blocked:
+            return max(under(maxUsd * 1.08), c(maxUsd + 1))
+        case .auto, .attack:
+            let p = max(under(min(current, auto * 0.95)), c(auto / 2))
+            return p > 0 && p <= auto ? p : nil
+        case .reset:
+            return nil
+        }
+    }
+
     private static func randomUserCode() -> String {
         let letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
         func group() -> String { String((0..<4).map { _ in letters.randomElement()! }) }

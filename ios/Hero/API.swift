@@ -15,6 +15,7 @@ protocol API: Sendable {
     func logout() async throws
     func startWallet(handle: String?) async throws -> WalletStart
     func useDemoWallet() async throws
+    func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest
 }
 
 enum APIError: Error, LocalizedError {
@@ -153,5 +154,10 @@ final class LiveAPI: API {
 
     func useDemoWallet() async throws {
         let _: OkResponse = try await send("POST", "api/wallet/demo", body: EmptyBody())
+    }
+
+    private struct DemoBody: Encodable { var scenario: DemoScenario }
+    func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest {
+        try await send("POST", "api/requests/\(requestId)/demo", body: DemoBody(scenario: scenario))
     }
 }
