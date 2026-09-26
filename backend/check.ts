@@ -8,7 +8,8 @@ import { once } from "node:events";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hashTypedData, keccak256, stringToBytes } from "viem";
+import { hashTypedData, keccak256, recoverTypedDataAddress, stringToBytes, verifyTypedData } from "viem";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 const ISS = "https://sandbox.auth.world.org";
 process.env.WORLD_OIDC_ISSUER = ISS;
@@ -140,7 +141,10 @@ process.env.HERO_STATE_DIR = mkdtempSync(join(tmpdir(), "hero-check-"));
 writeFileSync(join(process.env.HERO_STATE_DIR, ".world-owner.json"), JSON.stringify({ iss: ISS, sub: "legacy-sub" })); // pre-accounts single owner
 process.env.PUBLIC_URL = "https://hero.test/";
 delete process.env.HERO_REQUIRE_LOGIN;
-const { mountHero, demoPrice } = await import("./hero.js");
+process.env.MERCHANT_PRIVATE_KEY = generatePrivateKey();
+const MERCHANT = privateKeyToAccount(process.env.MERCHANT_PRIVATE_KEY as `0x${string}`).address;
+process.env.MERCHANT_ADDRESS = MERCHANT;
+const { mountHero, demoPrice, timeline, saveState, loadState } = await import("./hero.js");
 const { default: express } = await import("express");
 const app = express();
 app.use(express.json());
@@ -241,6 +245,32 @@ assert.equal(last(dr.body).blocked, true);
 dr = await demo("auto");
 assert.equal(dr.body.status, "bought");
 assert.ok(dr.body.currentPrice <= 100);
+// Hero Demo Merchant: a simulated order with a real EIP-712 receipt signed by the merchant key
+const ord = dr.body.order;
+assert.match(ord.id, /^HD-[0-9A-F]{8}$/);
+assert.deepEqual([ord.status, ord.simulated, ord.merchantName, ord.registry, ord.merchantVerified, ord.humanApproved, ord.priceUsd, ord.txHash],
+  ["paid", true, "Hero Demo Merchant", "hero-verified.eth", false, false, dr.body.currentPrice, undefined]); // no chain: nothing verified, no tx
+assert.equal(ord.merchantAddress, MERCHANT);
+assert.equal(ord.id, `HD-${ord.orderHash.slice(2, 10).toUpperCase()}`);
+assert.match(ord.paidAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/); // iso, no millis
+assert.deepEqual(ord.timeline.map((t: any) => [t.status, t.done]), [["paid", true], ["confirmed", false], ["shipped", false], ["delivered", false]]);
+const td = ord.typedData;
+assert.deepEqual(td.domain, { name: "Hero Demo Merchant", version: "1", chainId: 11155111 });
+assert.equal(td.message.amount, String(Math.round(ord.priceUsd * 1e6))); // bigints travel as strings
+const signed = { ...td, message: { ...td.message, amount: BigInt(td.message.amount), paidAt: BigInt(td.message.paidAt) }, signature: ord.signature };
+assert.ok(await verifyTypedData({ address: MERCHANT, ...signed }));
+assert.equal(await recoverTypedDataAddress(signed), MERCHANT);
+assert.equal(await verifyTypedData({ address: MERCHANT, ...signed, message: { ...signed.message, amount: 1n } }), false); // tampered amount
+assert.equal(last(dr.body).text, `Order ${ord.id} confirmed by Hero Demo Merchant (simulated fulfilment)`);
+assert.equal(dr.body.activity.filter((a: any) => a.text.startsWith("Bought")).length, 1); // e2e-wallet.sh parses this line
+assert.deepEqual(await (await get(`/merchant/orders/${ord.id}`)).json(), ord); // public, no session
+assert.equal((await (await get("/merchant/orders")).json())[0].id, ord.id);
+assert.equal((await get("/merchant/orders/HD-00000000")).status, 404);
+// demo clock: paid 0 s, confirmed 5 s, shipped 20 s, delivered 45 s
+const t0 = Date.UTC(2026, 8, 27, 0, 0, 0);
+const at = (ms: number) => timeline(t0, t0 + ms).filter((t) => t.done).at(-1)!.status;
+assert.deepEqual([at(0), at(4999), at(5000), at(19_999), at(20_000), at(44_999), at(45_000), at(9e9)], ["paid", "paid", "confirmed", "confirmed", "shipped", "shipped", "delivered", "delivered"]);
+assert.deepEqual(timeline(t0, t0).map((t) => t.at), ["2026-09-27T00:00:00Z", "2026-09-27T00:00:05Z", "2026-09-27T00:00:20Z", "2026-09-27T00:00:45Z"]);
 assert.deepEqual(await demo("approval"), { status: 409, body: { error: "not_watching" } });
 dr = await demo("reset");
 assert.deepEqual([dr.body.status, dr.body.currentPrice], ["watching", 210]); // back to the pre-demo price
@@ -249,6 +279,17 @@ assert.deepEqual([dr.body.status, dr.body.currentPrice], ["needsApproval", 149.9
 assert.match(last(dr.body).text, /code ABCD-EFGH/);
 tokenReplies = [[400, { error: "authorization_pending" }]];
 assert.equal((await (await get("/api/approvals", session)).json()).filter((a: any) => a.requestId === req1.id && a.status === "pending").length, 1);
+// persistence round-trip (a backend restart): requests + orders come back, a pending World ID approval comes back expired, no device code on disk
+saveState();
+const onDisk = readFileSync(join(stateDir, ".state.json"), "utf8");
+assert.ok(onDisk.includes(ord.id) && !onDisk.includes("dev-secret"));
+loadState();
+const strip = (o: any) => ({ ...o, status: undefined, timeline: undefined });
+assert.deepEqual(strip(await (await get(`/merchant/orders/${ord.id}`)).json()), strip(ord));
+const reloaded = await (await get(`/api/requests/${req1.id}`, session)).json();
+assert.deepEqual([reloaded.status, reloaded.currentPrice, reloaded.ensName], ["watching", 149.99, req1.ensName]);
+assert.match(last(reloaded).text, /backend restarted/);
+assert.deepEqual((await (await get("/api/approvals", session)).json()).map((a: any) => a.status), ["expired"]);
 dr = await demo("reset");
 assert.equal(dr.body.status, "watching");
 assert.equal((await (await get("/api/approvals", session)).json()).filter((a: any) => a.status === "pending").length, 0);

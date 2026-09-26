@@ -3,3 +3,5 @@ node_modules/
 .world-owner.json
 .sessions.json
 .accounts.json
+.state.json
+.state.json.tmp

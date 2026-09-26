@@ -1,10 +1,10 @@
 // Hero API for the iOS app: requests -> time-aware strategy -> ENS policy bands -> auto-buy or World-approved buy.
 import type { Express, Request, Response } from "express";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
-  createPublicClient, createWalletClient, encodeAbiParameters, encodeFunctionData, getAddress, http, keccak256, namehash, nonceManager, parseAbi,
-  parseEther, stringToBytes, toHex, type Hex, type PrivateKeyAccount, type WalletClient,
+  createPublicClient, createWalletClient, encodeAbiParameters, encodeFunctionData, getAddress, http, isAddressEqual, keccak256, namehash, nonceManager,
+  parseAbi, parseEther, parseEventLogs, stringToBytes, toHex, zeroHash, type Hex, type PrivateKeyAccount, type WalletClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
@@ -40,7 +40,8 @@ type Ctx = { acct?: string; demo: boolean; payer?: Hex; root: string; resolver?:
 type Req = Draft & {
   acct?: string; ctx: Ctx; // owner account key (undefined = no session) and its context when the request was made
   id: string; imageUrl?: string; ensName: string; status: "watching" | "readyToBuy" | "needsApproval" | "bought" | "expired";
-  currentPrice: number; targetPrice?: number; merchant?: string; offerSku?: string; boughtAt?: number; boughtPrice?: number;
+  currentPrice: number; targetPrice?: number; merchant?: string; offer?: Offer; boughtAt?: number; boughtPrice?: number;
+  orderId?: string; // the merchant order (HD-…) of the current purchase
   strategy?: { summary: string; bullets: string[]; buyBy: string; confidence: number };
   priceHistory: { date: string; price: number }[]; events: { date: string; name: string }[];
   activity: { date: string; text: string; txHash?: string; blocked?: boolean }[]; // blocked: a policy/contract rejection
@@ -112,6 +113,40 @@ const links = new Map<string, { device: Device; status: "pending" | "linked" | "
 
 const requests = new Map<string, Req>();
 const approvals = new Map<string, Approval>();
+const orders = new Map<string, MerchantOrder>();
+
+// Requests, approvals and merchant orders survive restarts (the live demo): .state.json, written debounced after every /api call.
+const STATE_FILE = stateFile(".state.json"), STATE_TMP = stateFile(".state.json.tmp");
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+const persist = () => void (saveTimer ??= setTimeout(saveState, 300));
+export function saveState() {
+  clearTimeout(saveTimer);
+  saveTimer = undefined;
+  const approvalsOut = [...approvals.values()].map(({ world, device, proof, buying, ...a }) => a); // never the device code or live IDKit request
+  const json = JSON.stringify({ requests: [...requests.values()], approvals: approvalsOut, orders: [...orders.values()] }, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
+  writeFileSync(STATE_TMP, json, { mode: 0o600 });
+  renameSync(STATE_TMP, STATE_FILE); // atomic: a crash mid-write never leaves a torn file
+}
+export function loadState() {
+  requests.clear(); approvals.clear(); orders.clear();
+  const s = load(STATE_FILE);
+  for (const r of s?.requests ?? []) requests.set(r.id, r);
+  for (const o of s?.orders ?? []) orders.set(o.id, o);
+  for (const a of s?.approvals ?? []) {
+    a.order = { ...a.order, price: BigInt(a.order.price), expiry: BigInt(a.order.expiry) };
+    if (a.status === "pending" || a.status === "approved") { // its World ID attempt was not persisted: expire it
+      a.status = "expired"; a.closed = true;
+      const r = requests.get(a.requestId);
+      if (r?.status === "needsApproval") {
+        r.status = "watching";
+        r.activity.push({ date: iso(Date.now()), text: "World ID confirmation expired (backend restarted) — nothing was bought" });
+      }
+    }
+    approvals.set(a.id, a);
+  }
+}
+loadState();
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { if (saveTimer) saveState(); process.exit(0); });
 // the demo wallet's categories (alice's resolver, shared by every demo account); wallet accounts use Account.limits
 const categories = new Map<string, { limitUsd: number; pct?: number }>(Object.entries(DEFAULT_LIMITS).map(([k, v]) => [k, { limitUsd: v }]));
 
@@ -258,6 +293,8 @@ const SPENDER_ABI = parseAbi([
   "function accounts(address) view returns (bytes32 root, address resolver, address agent, uint256 human)",
   "function continuity(address) view returns (bytes32)",
   "function remaining(bytes categoryName, address owner) view returns (uint256)",
+  "function verifiedMerchant(address) view returns (bool)",
+  "event Bought(address indexed payer, bytes32 indexed orderHash, bytes32 indexed category, address payTo, uint256 price, bool human)",
   "error NotAgent()", "error OrderUsed()", "error Expired()", "error NotYourPolicy()", "error OverMax()",
   "error OverBudget()", "error UnverifiedMerchant()", "error NotOwnerHuman()", "error ProofInvalid()", "error StaleApproval()", "error BadApproval()",
 ]);
@@ -286,7 +323,7 @@ function makeOrder(r: Req, price: number, payTo: Hex = CHAIN.merchant) {
     request: dnsEncode(r.ensName),
     payTo,
     price: BigInt(Math.round(price * 1e6)),
-    sku: keccak256(stringToBytes(r.offerSku ?? r.query)),
+    sku: keccak256(stringToBytes(r.offer?.sku ?? r.query)),
     expiry: BigInt(Math.floor(Date.now() / 1000) + 600),
     salt: keccak256(stringToBytes(randomUUID())),
   } as const;
@@ -486,6 +523,94 @@ function markBought(r: Req, price: number, txHash?: string, human = false) {
   r.activity.push({ date: iso(Date.now()), text: `Bought for ${usd(price)}${human ? " with your World ID approval" : " (auto band)"}${txHash ? "" : " (demo, no chain)"}`, txHash });
 }
 
+// ---------- Hero Demo Merchant: simulated fulfilment with a real, signed receipt ----------
+
+const MERCHANT_NAME = "Hero Demo Merchant";
+const merchantKey = isKey(process.env.MERCHANT_PRIVATE_KEY);
+const MERCHANT = merchantKey && privateKeyToAccount(merchantKey);
+const merchantMismatch = !!MERCHANT && !isAddressEqual(MERCHANT.address, CHAIN.merchant);
+if (merchantMismatch) console.error(`MERCHANT_PRIVATE_KEY does not control ${CHAIN.merchant}: no merchant orders`);
+const RECEIPT_DOMAIN = { name: MERCHANT_NAME, version: "1", chainId: sepolia.id } as const;
+const RECEIPT_TYPES = {
+  Receipt: [
+    { name: "orderNumber", type: "string" }, { name: "orderHash", type: "bytes32" }, { name: "txHash", type: "bytes32" },
+    { name: "payer", type: "address" }, { name: "payTo", type: "address" }, { name: "amount", type: "uint256" },
+    { name: "item", type: "string" }, { name: "store", type: "string" }, { name: "humanApproved", type: "bool" }, { name: "paidAt", type: "uint64" },
+  ],
+} as const;
+const DOMAIN_TYPE = [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }];
+type MerchantOrder = {
+  id: string; requestId: string; merchantAddress: Hex; merchantVerified: boolean; title: string; imageUrl?: string;
+  priceUsd: number; listPriceUsd?: number; store: string; storeUrl?: string; txHash?: Hex; orderHash: Hex; payer: Hex;
+  humanApproved: boolean; paidAt: number; signature?: Hex; typedData: object; // typedData: JSON-safe (bigints as strings)
+};
+
+/** After a buy: check the tx really paid this order to the merchant, then the merchant signs an EIP-712 receipt.
+ *  No chain (demo mode): the same order, clearly simulated, with no tx. `human` is replaced by Bought.human on chain. */
+async function fulfil(r: Req, order: ReturnType<typeof makeOrder>, txHash: Hex | undefined, human: boolean): Promise<MerchantOrder | undefined> {
+  if (merchantMismatch) return;
+  const hash = orderHash(order);
+  if (!isAddressEqual(order.payTo, CHAIN.merchant)) throw new Error(`order ${hash} does not pay the merchant`);
+  if (r.offer && order.sku !== keccak256(stringToBytes(r.offer.sku))) throw new Error(`order ${hash} is not for ${r.offer.sku}`);
+  let merchantVerified = false;
+  if (txHash) {
+    const [rc, verified] = await Promise.all([
+      pub.getTransactionReceipt({ hash: txHash }),
+      pub.readContract({ address: CHAIN.spender!, abi: SPENDER_ABI, functionName: "verifiedMerchant", args: [CHAIN.merchant] }),
+    ]);
+    const log = parseEventLogs({ abi: SPENDER_ABI, eventName: "Bought", logs: rc.logs })
+      .find((l) => isAddressEqual(l.address, CHAIN.spender!) && l.args.orderHash === hash);
+    if (!log || !isAddressEqual(log.args.payTo, CHAIN.merchant) || log.args.price !== order.price || !isAddressEqual(log.args.payer, order.payer)) {
+      throw new Error(`${txHash} has no Bought(${hash}) paying the merchant ${order.price}`);
+    }
+    human = log.args.human;
+    merchantVerified = verified;
+  }
+  const id = `HD-${hash.slice(2, 10).toUpperCase()}`;
+  const paidAt = r.boughtAt ?? Date.now();
+  const store = r.merchant ?? MERCHANT_NAME;
+  const message = {
+    orderNumber: id, orderHash: hash, txHash: txHash ?? zeroHash, payer: order.payer, payTo: order.payTo, amount: order.price,
+    item: r.offer?.title ?? r.title, store, humanApproved: human, paidAt: BigInt(Math.floor(paidAt / 1000)),
+  };
+  const signature = MERCHANT ? await MERCHANT.signTypedData({ domain: RECEIPT_DOMAIN, types: RECEIPT_TYPES, primaryType: "Receipt", message }) : undefined;
+  const o: MerchantOrder = {
+    id, requestId: r.id, merchantAddress: CHAIN.merchant, merchantVerified, title: message.item, imageUrl: r.imageUrl,
+    priceUsd: Number(order.price) / 1e6, listPriceUsd: r.offer && r.offer.priceMinor / 100, store,
+    storeUrl: r.offer && new URL(r.offer.merchant).origin, // the store's origin, never the checkout link
+    txHash, orderHash: hash, payer: order.payer, humanApproved: human, paidAt, signature,
+    typedData: {
+      domain: RECEIPT_DOMAIN, types: { EIP712Domain: DOMAIN_TYPE, ...RECEIPT_TYPES }, primaryType: "Receipt",
+      message: { ...message, amount: message.amount.toString(), paidAt: message.paidAt.toString() },
+    },
+  };
+  orders.set(id, o);
+  r.orderId = id;
+  r.activity.push({ date: iso(Date.now()), text: `Order ${id} confirmed by ${MERCHANT_NAME} (simulated fulfilment)` });
+  return o;
+}
+
+/** Order + agent status after every successful buy; the ENS status write is not awaited (it is a ~12 s tx). */
+async function afterBuy(r: Req, order: ReturnType<typeof makeOrder>, txHash: Hex | undefined, human: boolean) {
+  const o = await fulfil(r, order, txHash, human).catch((e) => void console.error("fulfil", e?.shortMessage ?? e?.message ?? e));
+  void agentStatus(r, o ? `bought ${o.id}` : "bought");
+}
+
+/** Demo clock: 7 days of shipping in 45 s, computed on read. */
+const STEPS = [["paid", "Paid", 0], ["confirmed", "Order confirmed", 5], ["shipped", "Shipped", 20], ["delivered", "Delivered", 45]] as const;
+export const timeline = (paidAt: number, now = Date.now()) =>
+  STEPS.map(([status, label, s]) => ({ status, label, at: iso(paidAt + s * 1000), done: now >= paidAt + s * 1000 }));
+
+function orderView(o: MerchantOrder) {
+  const steps = timeline(o.paidAt);
+  return {
+    id: o.id, status: steps.filter((s) => s.done).at(-1)!.status, simulated: true, merchantName: MERCHANT_NAME, merchantAddress: o.merchantAddress,
+    registry: "hero-verified.eth", merchantVerified: o.merchantVerified, title: o.title, imageUrl: o.imageUrl, priceUsd: o.priceUsd,
+    listPriceUsd: o.listPriceUsd, store: o.store, storeUrl: o.storeUrl, txHash: o.txHash, orderHash: o.orderHash, payer: o.payer,
+    humanApproved: o.humanApproved, paidAt: iso(o.paidAt), timeline: steps, signature: o.signature, typedData: o.typedData,
+  };
+}
+
 /** Called when the watched price changes: apply the ENS policy bands exactly like the contract does.
  *  `payTo` overrides the verified merchant (the demo's prompt-injection attack). */
 async function onPrice(r: Req, price: number, deps: Deps, payTo?: Hex) {
@@ -497,8 +622,9 @@ async function onPrice(r: Req, price: number, deps: Deps, payTo?: Hex) {
   if (price > left) return void r.activity.push({ date: iso(Date.now()), text: `${r.category} budget has ${usd(left)} left this period: waiting` });
   const order = makeOrder(r, price, payTo);
   if (price <= r.autoUsd) {
+    let tx: Hex | undefined;
     try {
-      markBought(r, price, await sendBuy(order));
+      tx = await sendBuy(order);
     } catch (e: any) {
       const txHash = /0x[0-9a-fA-F]{64}/.exec(String(e?.message))?.[0]; // set only when a sent tx reverted on chain
       const onChain = !!(CHAIN.spender && CHAIN.agentKey && order.payer !== ZERO); // same test as sendBuy
@@ -507,7 +633,8 @@ async function onPrice(r: Req, price: number, deps: Deps, payTo?: Hex) {
         : `Contract rejected the purchase: ${reason(e)}`;
       return void r.activity.push({ date: iso(Date.now()), text, txHash, blocked: true });
     }
-    return agentStatus(r, "bought");
+    markBought(r, price, tx);
+    return afterBuy(r, order, tx, false);
   }
   const a: Approval = { id: randomUUID(), requestId: r.id, cartHash: orderHash(order), order, price, status: "pending", expiresAt: Date.now() + 10 * 60_000 };
   a.returnTo = `hero://approval/${a.id}`;
@@ -558,7 +685,7 @@ const reason = (e: any): string => e?.cause?.data?.errorName ?? e?.walk?.((x: an
 
 async function refreshApproval(a: Approval, deps: Deps) {
   if (a.status === "pending" && Date.now() > a.expiresAt) a.status = "expired";
-  await (a.device ? advanceAgentWorld(a) : deps.advanceWorld(a));
+  if (a.status === "pending") await (a.device ? advanceAgentWorld(a) : deps.advanceWorld(a)); // both no-op otherwise (and restored approvals have no device)
   const r = requests.get(a.requestId)!;
   if ((a.status === "denied" || a.status === "expired") && !a.closed) {
     a.closed = true;
@@ -577,7 +704,7 @@ async function refreshApproval(a: Approval, deps: Deps) {
     a.txHash = a.device ? await sendBuyApproved(a.order, a.authTime!, a.continuity) : await sendBuy(a.order, a.proof);
     a.status = "paid";
     markBought(r, a.price, a.txHash, true);
-    await agentStatus(r, "bought");
+    await afterBuy(r, a.order, a.txHash as Hex | undefined, true);
   } catch (e: any) {
     a.status = "denied"; a.denyReason = reason(e); a.closed = true;
     r.status = "watching";
@@ -596,8 +723,9 @@ function approvalView(a: Approval) {
 
 function requestView(r: Req) {
   if (r.status === "watching" && Date.now() > Date.parse(r.deadline)) r.status = "expired";
-  const { offerSku, boughtAt, boughtPrice, acct, ctx, demoFrom, ...v } = r;
-  return { ...v, boughtAt: boughtAt ? iso(boughtAt) : undefined };
+  const { offer, orderId, boughtAt, boughtPrice, acct, ctx, demoFrom, ...v } = r;
+  const o = orderId ? orders.get(orderId) : undefined;
+  return { ...v, boughtAt: boughtAt ? iso(boughtAt) : undefined, order: o && orderView(o) };
 }
 
 /** Best catalog match: shares the query's words and is not suspiciously cheap (accessories, cables, cases). */
@@ -725,8 +853,16 @@ export function mountHero(app: Express, deps: Deps) {
     res.json({ ...s, ensName: a.root, address: a.wallet ?? "" });
   });
 
+  // Hero Demo Merchant's public order pages (receipt + timeline); no session.
+  app.get("/merchant/orders", (_req, res) => res.json([...orders.values()].slice(-20).reverse().map(orderView)));
+  app.get("/merchant/orders/:id", (req, res) => {
+    const o = orders.get(req.params.id);
+    o ? res.json(orderView(o)) : res.status(404).json({ error: "not_found" });
+  });
+
   // Every /api route needs a session unless HERO_REQUIRE_LOGIN=0 (read per request).
   app.use("/api", (req, res, next) => {
+    res.on("finish", persist); // any /api call may have changed requests/approvals/orders
     const s = sessionOf(req);
     res.locals.session = s;
     res.locals.acct = s && accountFor(s.iss, s.sub);
@@ -791,7 +927,8 @@ export function mountHero(app: Express, deps: Deps) {
     const current = offer ? offer.priceMinor / 100 : d.maxUsd * 1.05;
     const r: Req = {
       ...d, acct: a?.key, ctx, id, ensName: `${slug}.${d.category.toLowerCase()}.${ctx.root}`, status: "watching", currentPrice: current,
-      imageUrl: offer?.image, merchant: offer ? new URL(offer.merchant).host : undefined, offerSku: offer?.sku,
+      imageUrl: offer?.image, merchant: offer ? new URL(offer.merchant).host : undefined,
+      offer: offer && { sku: offer.sku, title: offer.title, merchant: offer.merchant, priceMinor: offer.priceMinor, image: offer.image },
       priceHistory: history(id, current),
       events: EVENTS.map((e) => ({ date: iso(e.date), name: e.name })),
       activity: [],
@@ -826,7 +963,7 @@ export function mountHero(app: Express, deps: Deps) {
     const s = req.body?.scenario;
     if (s === "reset") {
       for (const [id, a] of approvals) if (a.requestId === r.id && (a.status === "pending" || a.status === "approved")) approvals.delete(id);
-      Object.assign(r, { status: "watching", boughtAt: undefined, boughtPrice: undefined });
+      Object.assign(r, { status: "watching", boughtAt: undefined, boughtPrice: undefined, orderId: undefined });
       if (r.demoFrom !== undefined) {
         r.currentPrice = r.demoFrom;
         r.priceHistory.push({ date: iso(Date.now()), price: r.demoFrom });
