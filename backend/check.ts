@@ -357,6 +357,12 @@ assert.equal((await get("/api/me", mallory)).status, 401);
 assert.equal(JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"))[`${ISS}|mallory-sub`], undefined);
 assert.ok(!readFileSync(join(stateDir, ".state.json"), "utf8").includes(dup[2]));
 assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]); // other accounts untouched
+const { mergeDraft } = await import("./hero.js");
+const h0 = { title: "Tv", query: "tv", category: "Hobby", autoUsd: 400, maxUsd: 500, deadline: "2026-10-27T00:00:00Z" };
+const m0 = mergeDraft(h0, { title: "Sony TV", autoUsd: null, maxUsd: "600", category: "needs", deadlineDays: null });
+assert.deepEqual([m0.title, m0.autoUsd, m0.maxUsd, m0.category, m0.deadline], ["Sony TV", 480, 600, "Needs", h0.deadline]);
+assert.equal(mergeDraft(h0, { autoUsd: 900, maxUsd: 500 }).autoUsd, 500); // auto never above max
+assert.deepEqual(mergeDraft(h0, undefined), h0);
 const { resetTarget } = await import("./hero.js");
 await assert.rejects(resetTarget("nobody"), /no account matches/);
 assert.equal((await get("/api/logout", session, "POST")).status, 200);

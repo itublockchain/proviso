@@ -192,9 +192,23 @@ async function parseDraft(msg: string): Promise<Draft> {
   const ai = await claudeJson<Partial<Draft>>(
     `Extract a purchase request as JSON {title, query (short product search query), category ("Hobby" or "Needs"), autoUsd (price the agent may buy at without asking), maxUsd (hard cap), deadlineDays}. If only a max is given, autoUsd = 80% of max. Message: ${JSON.stringify(msg)}`
   );
-  if (!ai) return h;
-  const days = Number((ai as any).deadlineDays);
-  return { ...h, ...ai, deadline: Number.isFinite(days) && days > 0 ? iso(Date.now() + days * DAY) : h.deadline } as Draft;
+  return mergeDraft(h, ai);
+}
+
+/** The model's fields win only when they are usable; a null/garbage field falls back to the heuristic instead of overwriting it. */
+export function mergeDraft(h: Draft, ai: any): Draft {
+  if (!ai || typeof ai !== "object") return h;
+  const num = (v: unknown) => { const n = typeof v === "number" || typeof v === "string" ? Number(v) : NaN; return Number.isFinite(n) && n > 0 ? n : undefined; };
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const cat = String(ai.category ?? "").toLowerCase();
+  const maxUsd = num(ai.maxUsd) ?? h.maxUsd;
+  const autoUsd = Math.min(num(ai.autoUsd) ?? Math.round(maxUsd * 0.8), maxUsd);
+  const days = num(ai.deadlineDays);
+  return {
+    title: str(ai.title) ?? h.title, query: str(ai.query) ?? h.query,
+    category: cat === "needs" ? "Needs" : cat === "hobby" ? "Hobby" : h.category,
+    autoUsd, maxUsd, deadline: days ? iso(Date.now() + days * DAY) : h.deadline,
+  };
 }
 
 // ---------- strategy ----------
