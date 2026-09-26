@@ -6,11 +6,35 @@ struct HeroApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootTabView()
+            RootView()
                 .environment(store)
-                .task { await store.loadAll() }
+                .task { await store.loadSession() }
                 .onOpenURL { store.handleDeepLink($0) }
         }
+    }
+}
+
+/// Top-level gate: first-launch onboarding (which ends in mandatory sign-in), then sign-in
+/// whenever there's no active session, then the app itself.
+struct RootView: View {
+    @Environment(Store.self) private var store
+
+    var body: some View {
+        Group {
+            if !store.onboardingSeen {
+                OnboardingView()
+            } else {
+                switch store.authPhase {
+                case .loading:
+                    Theme.background.ignoresSafeArea()
+                case .signedOut:
+                    SignInView()
+                case .signedIn:
+                    RootTabView()
+                }
+            }
+        }
+        .animation(.default, value: store.onboardingSeen)
     }
 }
 

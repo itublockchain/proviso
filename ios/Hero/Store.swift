@@ -9,13 +9,13 @@ final class Store {
     var demoMode: Bool {
         didSet {
             UserDefaults.standard.set(demoMode, forKey: "hero.demoMode")
-            Task { await loadAll() } // switch data source right away
+            Task { await loadSession() } // switch data source right away
         }
     }
     var backendURLString: String {
         didSet {
             UserDefaults.standard.set(backendURLString, forKey: "hero.backendURL")
-            if !demoMode { Task { await loadAll() } }
+            if !demoMode { Task { await loadSession() } }
         }
     }
 
@@ -28,9 +28,23 @@ final class Store {
     var showingComposer = false
     var approvalsPath: [String] = []
 
+    /// Mandatory Sign in with World ID: `nil` while the session is still being checked at launch.
+    var me: Me?
+    var onboardingSeen: Bool {
+        didSet { UserDefaults.standard.set(onboardingSeen, forKey: "hero.onboardingSeen") }
+    }
+
+    enum AuthPhase { case loading, signedOut, signedIn }
+    var authPhase: AuthPhase {
+        guard let me else { return .loading }
+        return me.signedIn ? .signedIn : .signedOut
+    }
+    var isSignedIn: Bool { me?.signedIn == true }
+
     private var mockAPI = MockAPI()
     /// Public tunnel to the demo backend, so the app works on a real phone too.
     static let defaultBackend = "https://uncookable-izaiah-dualistic.ngrok-free.dev"
+    private static let demoSignedInKey = "hero.demoSignedIn"
 
     private var api: API {
         if demoMode {
@@ -43,6 +57,69 @@ final class Store {
     init() {
         self.demoMode = UserDefaults.standard.object(forKey: "hero.demoMode") as? Bool ?? true
         self.backendURLString = UserDefaults.standard.string(forKey: "hero.backendURL") ?? Self.defaultBackend
+        self.onboardingSeen = UserDefaults.standard.bool(forKey: "hero.onboardingSeen")
+    }
+
+    /// Runs an API call, and on a 401 sign-out-required response drops the local session so the
+    /// UI falls back to sign-in — the one place that needs to know about that error shape.
+    private func run<T>(_ body: () async throws -> T) async throws -> T {
+        do {
+            return try await body()
+        } catch APIError.sessionExpired {
+            clearSessionLocally()
+            throw APIError.sessionExpired
+        }
+    }
+
+    private func clearSessionLocally() {
+        Keychain.token = nil
+        me = .signedOut
+    }
+
+    /// Checks the current session (real backend token, or the demo mock) and loads app data if signed in.
+    /// Called once at launch, and again right after sign-in/sign-out/demo-mode changes.
+    func loadSession() async {
+        if demoMode {
+            if UserDefaults.standard.bool(forKey: Self.demoSignedInKey) { await mockAPI.signIn() }
+            me = try? await mockAPI.me()
+        } else if Keychain.token != nil {
+            do {
+                me = try await api.me()
+            } catch {
+                me = .signedOut
+                if case APIError.sessionExpired = error { Keychain.token = nil }
+            }
+        } else {
+            me = .signedOut
+        }
+        if isSignedIn { await loadAll() }
+    }
+
+    /// Opens the World ID sign-in browser flow and, on success, stores the session and loads app data.
+    func signInWithWorldID() async throws {
+        demoMode = false
+        let backend = URL(string: backendURLString) ?? URL(string: Self.defaultBackend)!
+        let token = try await WorldSignInController().signIn(backendBase: backend)
+        Keychain.token = token
+        await loadSession()
+    }
+
+    /// "Explore demo" — no network, just flips the mock API into a signed-in state.
+    func signInWithDemo() async {
+        demoMode = true
+        UserDefaults.standard.set(true, forKey: Self.demoSignedInKey)
+        await mockAPI.signIn()
+        await loadSession()
+    }
+
+    func signOut() async {
+        try? await api.logout()
+        UserDefaults.standard.set(false, forKey: Self.demoSignedInKey)
+        clearSessionLocally()
+    }
+
+    func replayIntro() {
+        onboardingSeen = false
     }
 
     func loadAll() async {
@@ -50,12 +127,16 @@ final class Store {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            async let r = api.fetchRequests()
-            async let a = api.fetchApprovals()
-            async let b = api.fetchBudgets()
-            requests = try await r
-            approvals = try await a
-            budgets = try await b
+            try await run {
+                async let r = api.fetchRequests()
+                async let a = api.fetchApprovals()
+                async let b = api.fetchBudgets()
+                requests = try await r
+                approvals = try await a
+                budgets = try await b
+            }
+        } catch APIError.sessionExpired {
+            // handled in run(): local session already cleared, UI falls back to sign-in.
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -70,16 +151,16 @@ final class Store {
     }
 
     func sendChat(requestId: String?, message: String) async throws -> ChatReply {
-        try await api.chat(requestId: requestId, message: message)
+        try await run { try await api.chat(requestId: requestId, message: message) }
     }
 
     func submitDraft(_ draft: RequestDraft) async throws {
-        let created = try await api.createRequest(draft)
+        let created = try await run { try await api.createRequest(draft) }
         requests.insert(created, at: 0)
     }
 
     func updateBudget(name: String, limitUsd: Double, pct: Double?) async throws {
-        let updated = try await api.updateBudget(name: name, limitUsd: limitUsd, pct: pct)
+        let updated = try await run { try await api.updateBudget(name: name, limitUsd: limitUsd, pct: pct) }
         if let idx = budgets?.categories.firstIndex(where: { $0.name == name }) {
             budgets?.categories[idx] = updated
         }

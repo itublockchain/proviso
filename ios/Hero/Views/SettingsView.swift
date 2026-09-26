@@ -7,6 +7,7 @@ struct SettingsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.spacingXL) {
+                    accountSection
                     backendSection
                     if let wallet = store.budgets?.wallet {
                         walletSection(wallet)
@@ -18,6 +19,36 @@ struct SettingsView: View {
             }
             .background(Theme.background)
             .navigationTitle("Settings")
+        }
+    }
+
+    private var accountSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(title: "Account").padding(.bottom, Theme.spacingS)
+            HairlineDivider()
+            if let me = store.me, me.signedIn {
+                settingsRow(
+                    "Signed in with World ID",
+                    me.acr == orbVerifiedAcr ? "Orb-verified human" : "Verified"
+                )
+                HairlineDivider()
+                if let sub = me.sub {
+                    settingsRow("World ID", sub, monospaced: true)
+                    HairlineDivider()
+                }
+                if let authTime = me.authTime {
+                    settingsRow("Signed in", authTime.formatted(date: .abbreviated, time: .shortened))
+                    HairlineDivider()
+                }
+            }
+            Button("Replay intro") { store.replayIntro() }
+                .padding(.vertical, 9)
+            HairlineDivider()
+            Button("Sign out", role: .destructive) {
+                Task { await store.signOut() }
+            }
+            .padding(.vertical, 9)
+            HairlineDivider()
         }
     }
 

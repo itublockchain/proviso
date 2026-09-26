@@ -218,6 +218,7 @@ actor MockAPI: API {
     private var categories: [Category] = [MockData.hobbyCategory, MockData.needsCategory]
     private var worldLinked = false
     private var pendingWorldLinkId: String?
+    private var signedIn = false
 
     func chat(requestId: String?, message: String) async throws -> ChatReply {
         try? await Task.sleep(for: .milliseconds(500))
@@ -337,6 +338,24 @@ actor MockAPI: API {
         guard pendingWorldLinkId == linkId else { return }
         worldLinked = true
     }
+
+    /// "Explore demo" flips this on — no network, just an in-memory mock session.
+    func signIn() { signedIn = true }
+
+    func me() async throws -> Me {
+        guard signedIn else { return .signedOut }
+        return Me(
+            signedIn: true,
+            sub: "demo0badc0de",
+            authTime: MockData.now,
+            acr: orbVerifiedAcr,
+            worldLinked: worldLinked,
+            wallet: MockData.wallet.address,
+            ensRoot: MockData.wallet.ensRoot
+        )
+    }
+
+    func logout() async throws { signedIn = false }
 
     private static func randomUserCode() -> String {
         let letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"

@@ -151,3 +151,19 @@ struct BudgetsResponse: Codable {
     var wallet: Wallet
     var categories: [Category]
 }
+
+/// GET api/me — current Sign in with World ID state.
+struct Me: Codable {
+    var signedIn: Bool
+    var sub: String?
+    var authTime: Date?
+    var acr: String?
+    var worldLinked: Bool
+    var wallet: String?
+    var ensRoot: String?
+
+    static let signedOut = Me(signedIn: false, sub: nil, authTime: nil, acr: nil, worldLinked: false, wallet: nil, ensRoot: nil)
+}
+
+/// The `acr` value World ID reports for an Orb-verified human (see backend `worldid.ts`).
+let orbVerifiedAcr = "https://world.org/oidc/acr/orb-v3"

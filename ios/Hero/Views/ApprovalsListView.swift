@@ -14,10 +14,6 @@ struct ApprovalsListView: View {
         @Bindable var store = store
         NavigationStack(path: $store.approvalsPath) {
             VStack(spacing: 0) {
-                if store.budgets?.wallet.worldLinked != true {
-                    WorldIDNudgeBanner()
-                    HairlineDivider()
-                }
                 Group {
                     if store.approvals.isEmpty {
                         ContentUnavailableView(
@@ -66,23 +62,6 @@ struct ApprovalsListView: View {
             }
             .refreshable { await store.loadAll() }
         }
-    }
-}
-
-/// Reminder shown when the agent isn't linked to World ID yet — approvals can't be confirmed without it.
-/// A quiet banner, not a boxed card: the World ID surface itself only appears once there's an
-/// actual code to confirm.
-private struct WorldIDNudgeBanner: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Link World ID so the agent can ask you for approval on important purchases.")
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
-            WorldIDLinkRow(worldLinked: false)
-        }
-        .padding(.horizontal, Theme.spacingM)
-        .padding(.vertical, Theme.spacingM)
-        .background(Theme.secondaryBackground)
     }
 }
 

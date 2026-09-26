@@ -58,8 +58,6 @@ private struct WalletHeader: View {
             }
             HairlineDivider()
             stat("Agent", short(wallet.agent))
-            HairlineDivider()
-            WorldIDLinkRow(worldLinked: wallet.worldLinked ?? false)
         }
     }
 
