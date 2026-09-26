@@ -31,7 +31,7 @@ Notes written during the hackathon, for the World and ENS teams.
 
 ## ENSv2 (Sepolia)
 
-**What we use it for.** The spending-policy tree (`<request>.<category>.herodemo.eth`), category subregistries, `data` records read on-chain by `PolicySpender`, an EAC setter role that lets the agent write only the `status` text record, and a merchant registry name.
+**What we use it for.** The spending-policy tree (`<request>.<category>.<username>.proviso.eth`), category subregistries, `data` records read on-chain by `PolicySpender`, an EAC setter role that lets the agent write only the `status` text record, and a merchant registry name.
 
 **Friction.**
 - The live Sepolia deployment matched a `deploy/sepolia-migration` branch rather than `main`; `authorizeTextRoles` / `setAlias` from `main` revert on Sepolia, while `grantSetterRoles` / `linkToNode` exist.

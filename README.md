@@ -19,7 +19,7 @@ Agentic payments today give an LLM spending power and hope it behaves. Google's 
 Proviso moves the guarantees on-chain:
 
 - **The agent key cannot move funds.** It can only call `PolicySpender.buy*()`. The contract pulls USDC from the owner's wallet with a normal allowance, and only after checking the owner's ENS policy.
-- **Policies live in ENSv2, not in our database.** `ps5.hobby.alice.eth` carries `auto`, `max`, `deadline`; `hobby.alice.eth` carries the monthly `limit` (and optional `pct` of balance). Any wallet or agent can read them; only the owner can change them.
+- **Policies live in ENSv2, not in our database.** `ps5.hobby.alice.proviso.eth` carries `auto`, `max`, `deadline`; `hobby.alice.proviso.eth` carries the monthly `limit` (and optional `pct` of balance). Any wallet or agent can read them; only the owner can change them.
 - **Human approval is bound to a person and to an order.** A mid-band purchase needs a World ID for Agents confirmation from the owner's own World ID (same pairwise `sub` as at sign-in), no older than 5 minutes, signed over the exact order hash.
 
 ## How it works
@@ -33,7 +33,7 @@ Proviso moves the guarantees on-chain:
                                     + Amazon): every store's price for the
                                     pick; modeled history, sale calendar
                                     → strategy
-                                    writes policy ─────────────────────────────▶ ENSv2: tv-xxxx.hobby.herodemo.eth
+                                    writes policy ─────────────────────────────▶ ENSv2: tv-xxxx.hobby.alice.proviso.eth
                                                                                    auto / max / deadline (data records)
                                     price drops into auto band ────────────────▶ PolicySpender.buy(order)
                                                                                    reads ENS, checks merchant + budget,
@@ -48,11 +48,11 @@ Proviso moves the guarantees on-chain:
 
 ### ENSv2 is the policy layer
 
-- **Hierarchy = policy scope.** `herodemo.eth` → category subregistries (`hobby`, `needs`) → one registered subname per request. A user with their own wallet gets the same tree under `<handle>.herodemo.eth`: after onboarding (older accounts: on their first request) Proviso deploys its subregistry and the `hobby`/`needs` subregistries, off the onboarding path, and the user's wallet owns the category and request names. The contract derives the category from the request name and applies one shared monthly budget to every request under it.
+- **Hierarchy = policy scope: `[item].[category].[username].proviso.eth`.** `proviso.eth` → one username per user (`<handle>.proviso.eth`, owned by the user's wallet, with the user's own resolver) → category subregistries (`hobby`, `needs`) → one registered subname per request, e.g. `playstation-5-653a.hobby.alice.proviso.eth`. After onboarding Proviso deploys the username's subregistry and the `hobby`/`needs` subregistries, off the onboarding path, and the user's wallet owns the category and request names. The Proviso-held demo wallet is just one more username, `alice.proviso.eth` (reserved). The contract derives the category from the request name and applies one shared monthly budget to every request under it.
 - **Records = rules.** Numbers are stored as `data` records (`abi.encode(uint256)`) on a `PermissionedResolver` and read on-chain with `resolve(name, data(...))`. Missing record → 0 → the check fails closed.
 - **Enhanced Access Control = what the agent may touch.** The agent holds a setter role for the `status` text record only. It can report "bought", it cannot raise `max` or `limit` (tested on a Sepolia fork against the deployed ENSv2 resolver code).
 - **Subname expiry = request deadline.** Each request name is registered in its category's subregistry with expiry = deadline (owner = the payer, resolver = the payer's resolver), plus a `deadline` record the contract enforces (the contract reads the resolver directly, so it does not rely on expiry alone).
-- **Readable in any ENS tool.** The contract reads only `data` records; Proviso mirrors them as text records so ENS tools show the policy (explorer.ens.dev displays the `description`; every key resolves through the Universal Resolver): `auto`, `max`, `deadline`, `description` on each request, `limit` and `description` on each category, `description`/`url`/`avatar` on `herodemo.eth` and `hero-verified.eth`. User resolvers grant the operator only those four request text keys (resolvers created before this grant keep data records only).
+- **Readable in any ENS tool.** The contract reads only `data` records; Proviso mirrors them as text records so ENS tools show the policy (explorer.ens.dev displays the `description`; every key resolves through the Universal Resolver): `auto`, `max`, `deadline`, `description` on each request, `limit` and `description` on each category, `description`/`url` on `proviso.eth` and `alice.proviso.eth`, `description`/`url`/`avatar` on `hero-verified.eth`. User resolvers grant the operator only those four request text keys (resolvers created before this grant keep data records only).
 - **Budgets reset without transactions.** Spending is keyed by 30-day period; a new period is a new counter. `pct` caps a category at a share of the current USDC balance, so a salary deposit raises the cap with no policy rewrite.
 - **Merchants are an ENS registry too.** `hero-verified.eth` holds `data[<merchant address>] = 1`. Auto-band purchases only go to addresses listed there.
 
@@ -69,16 +69,19 @@ Proviso moves the guarantees on-chain:
 | PolicySpender | [`0x1F478b128b388486a20785b107Af7daD769685B8`](https://sepolia.etherscan.io/address/0x1F478b128b388486a20785b107Af7daD769685B8) (`setupWithPermit`: one gasless owner signature; `resetAccount`/`resetFor`: start over, see below) |
 | PolicySpender v2 (superseded) | [`0x4821452b64d70258c11acc2722c29fE934f0aB45`](https://sepolia.etherscan.io/address/0x4821452b64d70258c11acc2722c29fE934f0aB45) |
 | PolicySpender v1 (superseded) | [`0x3dC4501cE0d266925F8de06ee3a8c0515125f197`](https://sepolia.etherscan.io/address/0x3dC4501cE0d266925F8de06ee3a8c0515125f197) |
-| Owner (demo) | `0x73B30b7150D6cFf3EC35EF25a65E4b8625Cf4435` — `herodemo.eth` |
+| Owner (demo) | `0x73B30b7150D6cFf3EC35EF25a65E4b8625Cf4435` — `alice.proviso.eth` (the operator also owns `proviso.eth`) |
+| ENS root | [`proviso.eth`](https://explorer.ens.dev/proviso.eth), registry `0x7B64a7118017572b38f7c880e13AeBA508cF98c1` |
 | Agent key | `0x79bbB630E4Ba04651cF8642697085E7b1f0AD823` |
 | Verified merchant | `0xB4c42772dAeE7E4251bE9dc4782387C9881e6371` in `hero-verified.eth` |
 | ENS resolver | `0x6D200830Fc9dfCc4Dd55B6c80CDE55f35Cc90856` |
 | Payment token | MockUSDC `0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e` (6 decimals, open mint) |
 
 Example transactions:
+- `proviso.eth` registered: [`0x4ec4d0b8…`](https://sepolia.etherscan.io/tx/0x4ec4d0b88315a571a3a9fadff3b27d66ee6ab36f24f25b3f48626361d45dadc9); demo account re-pointed to `alice.proviso.eth`: setAccount [`0x660b5009…`](https://sepolia.etherscan.io/tx/0x660b500942a27acb9cfb8c30a2e0ac3ef6f9e6d186200ee6f4e8d6c783c4abc9)
+- Request name [`playstation-5-653a.hobby.alice.proviso.eth`](https://explorer.ens.dev/playstation-5-653a.hobby.alice.proviso.eth) registered with expiry = deadline: [`0x1e4caf0c…`](https://sepolia.etherscan.io/tx/0x1e4caf0c012e8e6c2fe3ca88e9827db15c440ab8c0403d2f0de338b1cd65bca9); auto-band buy for $279: [`0xfcde5b21…`](https://sepolia.etherscan.io/tx/0xfcde5b210755843ea023d1f0e8d953443599f7ad312e57b82fcdfe9415cb4cdc)
 - Current contract deployed: [`0xe3d5ecfe…`](https://sepolia.etherscan.io/tx/0xe3d5ecfec81b69e6a0bee15040526b2c3ecc8ba71610a7425ba112ffa1320f8d); demo owner re-pointed to it: approve [`0x0d0ec841…`](https://sepolia.etherscan.io/tx/0x0d0ec841b80662cba2efaa5f902c8dfca63b5570ade0d3d5d13e437a2052ef2a), setAccount [`0x89485a1c…`](https://sepolia.etherscan.io/tx/0x89485a1c8cf591e133799964901609eda90ca528c64318507c8e9f6105605ab1)
 - v2 deployed: [`0x8bd9df89…`](https://sepolia.etherscan.io/tx/0x8bd9df898af83dfb87a25ca691146d53e9163aa85195cd86c9885d1460d98afa)
-- v1: Policy written for `mechanical-keyboard-d53e.needs.herodemo.eth`: [`0x8810ba18…`](https://sepolia.etherscan.io/tx/0x8810ba18a576d9b49a6ee4fec6b03187abeb907c2b326a2670071f0fb336bd4e)
+- v1 (earlier root `herodemo.eth`): Policy written for `mechanical-keyboard-d53e.needs.herodemo.eth`: [`0x8810ba18…`](https://sepolia.etherscan.io/tx/0x8810ba18a576d9b49a6ee4fec6b03187abeb907c2b326a2670071f0fb336bd4e)
 - v1: Auto-band purchase of a real Keychron listing for $49.99, paid from the owner's wallet: [`0x568f99ec…`](https://sepolia.etherscan.io/tx/0x568f99ec3e0d11682138b864e5aca9e5d184090b197ab22d6ac5f3af6d04993d)
 
 All addresses: [`contracts/deployments/sepolia.json`](contracts/deployments/sepolia.json).
@@ -115,7 +118,7 @@ Run the whole flow again from zero with the **same wallet and the same World ID*
 - **In the app:** Settings → *Reset & start over* (`POST /api/dev/reset`, session required). You are signed out; sign in again and onboard with the same handle.
 - **CLI:** `cd backend && npm run reset -- <wallet address | handle | all>` (`all` = every account not on the demo wallet). Works with the backend stopped (edits the state files) or running (goes through its loopback-only admin port, `PORT + 10`, so the running process cannot write the account back). Prints the tx hashes.
 
-What a reset does: the operator key calls `PolicySpender.resetFor(wallet)` (account row + World ID link deleted, spend `epoch` + 1 so every category counter restarts at 0) and unregisters `<handle>.herodemo.eth`; then the account's requests, approvals, orders, sessions and account row are deleted. The next onboarding deploys a fresh resolver (new setup nonce in its salt), so onboarding limits land in a clean policy tree. The Proviso-held demo wallet (`herodemo.eth`) is never reset on chain. `HERO_ALLOW_RESET=0` turns the endpoint off.
+What a reset does: the operator key calls `PolicySpender.resetFor(wallet)` (account row + World ID link deleted, spend `epoch` + 1 so every category counter restarts at 0) and unregisters `<handle>.proviso.eth`; then the account's requests, approvals, orders, sessions and account row are deleted. The next onboarding deploys a fresh resolver (new setup nonce in its salt), so onboarding limits land in a clean policy tree. The Proviso-held demo wallet (`alice.proviso.eth`) is never reset on chain. `HERO_ALLOW_RESET=0` turns the endpoint off.
 
 What the admin (`resetFor`) can and cannot do: it can only switch an account **off**. It cannot set an account, raise a limit, re-enable an agent or spend: after a reset nothing moves until the **owner** signs a fresh `setupWithPermit` (a new permit nonce, so an old signature cannot be replayed). Owners can do the same themselves with `resetAccount()`. The USDC allowance stays but is useless without an account row.
 
