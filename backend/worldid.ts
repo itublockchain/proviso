@@ -1,6 +1,6 @@
 // World ID for Agents (sandbox OIDC IdP): confidential-client device grant + ID token validation, all server-side.
 // Device codes, tokens and the client secret never leave this process and are never logged.
-import { createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
 import type { Hex } from "viem";
 
 export const ACR = "https://world.org/oidc/acr/orb-v3";
@@ -36,10 +36,10 @@ async function signingKey(kid: string) {
   return find();
 }
 
-export type Claims = { iss: string; sub: string; aud: string | string[]; exp: number; auth_time: number; acr?: string };
+export type Claims = { iss: string; sub: string; aud: string | string[]; exp: number; auth_time: number; acr?: string; nonce?: string };
 
-/** Full ID token validation: RS256 signature via JWKS, exact iss, aud, exp, fresh auth_time for this attempt, acr. */
-export async function verifyIdToken(jwt: string, o: { notBefore: number; now?: number; keyFor?: (kid: string) => Promise<any> }): Promise<Claims> {
+/** Full ID token validation: RS256 signature via JWKS, exact iss, aud, exp, fresh auth_time for this attempt (notBefore 0 = any past), acr, nonce. */
+export async function verifyIdToken(jwt: string, o: { notBefore: number; nonce?: string; now?: number; keyFor?: (kid: string) => Promise<any> }): Promise<Claims> {
   const now = (o.now ?? Date.now()) / 1000;
   const [h, p, s, extra] = jwt.split(".");
   if (!h || !p || !s || extra !== undefined) throw new Error("malformed id_token");
@@ -60,7 +60,54 @@ export async function verifyIdToken(jwt: string, o: { notBefore: number; now?: n
   if (typeof c.auth_time !== "number" || c.auth_time < o.notBefore / 1000 - 5) throw new Error("World ID proof is not fresh for this attempt");
   if (c.auth_time > now + 60) throw new Error("auth_time in the future");
   if (c.acr !== undefined && c.acr !== ACR) throw new Error("unexpected acr");
+  if (o.nonce !== undefined && c.nonce !== o.nonce) throw new Error("nonce mismatch");
   return c;
+}
+
+// ---------- browser sign-in: authorization code + S256 PKCE (attempt state never leaves the backend) ----------
+
+const rand = () => randomBytes(32).toString("base64url"); // 43 chars: also a valid PKCE verifier
+export const pkceChallenge = (verifier: string) => createHash("sha256").update(verifier).digest("base64url");
+
+export type Login = { nonce: string; verifier: string; createdAt: number };
+const LOGIN_TTL = 10 * 60_000;
+const logins = new Map<string, Login>(); // state -> attempt
+
+/** Authorization URL for a fresh attempt; only state, nonce and the S256 challenge go to the browser. */
+export async function loginUrl(redirectUri: string): Promise<string> {
+  const now = Date.now();
+  for (const [k, v] of logins) if (now - v.createdAt > LOGIN_TTL) logins.delete(k);
+  if (logins.size >= 1000) logins.delete(logins.keys().next().value!); // bound unauthenticated starts
+  const state = rand(), nonce = rand(), verifier = rand();
+  const u = new URL((await discovery()).authorization_endpoint);
+  for (const [k, v] of Object.entries({
+    client_id: OIDC.clientId, redirect_uri: redirectUri, response_type: "code", scope: "openid", state, nonce,
+    code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", acr_values: ACR,
+  })) u.searchParams.set(k, v);
+  logins.set(state, { nonce, verifier, createdAt: now });
+  return u.href;
+}
+
+/** Single use: the attempt is gone after this call, whatever the callback carried. */
+export function takeLogin(state: string): Login | undefined {
+  const a = logins.get(state);
+  logins.delete(state);
+  return a && Date.now() - a.createdAt <= LOGIN_TTL ? a : undefined;
+}
+
+/** Redeems the code once with the attempt's verifier; the ID token must carry the attempt's nonce. Throws an OAuth-style code. */
+export async function redeemLogin(a: Login, code: string, redirectUri: string): Promise<Claims> {
+  let r: Response;
+  try {
+    r = await form((await discovery()).token_endpoint, { grant_type: "authorization_code", code, redirect_uri: redirectUri, code_verifier: a.verifier });
+  } catch {
+    throw new Error("temporarily_unavailable"); // dependency failure, not an identity failure; the code may be consumed, never replay it
+  }
+  const j: any = await r.json().catch(() => ({}));
+  if (r.status === 503) throw new Error("temporarily_unavailable");
+  if (!r.ok || !j.id_token) throw new Error(/^[a-z_]+$/.test(j.error ?? "") ? j.error : "token_error");
+  // browser-session reuse keeps the original auth_time, so login accepts any past proof (step-up would pass max_age)
+  return verifyIdToken(j.id_token, { notBefore: 0, nonce: a.nonce });
 }
 
 export type Device = {
