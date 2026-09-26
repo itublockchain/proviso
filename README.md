@@ -95,7 +95,7 @@ All addresses: [`contracts/deployments/sepolia.json`](contracts/deployments/sepo
 ```
 contracts/   Foundry. PolicySpender + unit tests + Sepolia fork tests (real ENSv2, USDC, World ID router)
              script/SetupEns.s.sol (policy tree, merchant registry, agent role), script/Deploy.s.sol
-backend/     Node/TypeScript. Agent API for the app (hero.ts), World ID for Agents OIDC (worldid.ts),
+backend/     Node/TypeScript. Agent API for the app (proviso.ts), World ID for Agents OIDC (worldid.ts),
              Bedrock LLM calls, chain writes. Also serves an MCP app for ChatGPT (server.ts, widget.ts).
 ios/         SwiftUI, iOS 26. Requests, strategy, approvals, budgets. Demo mode works offline.
 ```
@@ -113,7 +113,7 @@ node --env-file=.env --import tsx server.ts          # :8787
 npm run prewarm                                      # optional: cache the stage queries' listings (~$0.02 of Monid credit)
 ```
 
-Backend `.env` (never committed): `SEPOLIA_RPC_URL`, `POLICY_SPENDER`, `USDC`, `WALLET_ADDRESS`, `DEPLOYER_PRIVATE_KEY` (owner, demo only), `AGENT_PRIVATE_KEY`, `MERCHANT_ADDRESS`, `MERCHANT_PRIVATE_KEY` (Proviso Demo Merchant, signs receipts), `ALICE_RESOLVER`, `HOBBY_REGISTRY`, `NEEDS_REGISTRY`, `ENS_ROOT`, `WORLD_OIDC_CLIENT_ID`, `WORLD_OIDC_CLIENT_SECRET`, `HERO_ATTESTER_PRIVATE_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`, `BEDROCK_MODEL_ID`, `MONID_API_KEY` (product search), and the IDKit `WORLD_*` values.
+Backend `.env` (never committed): `SEPOLIA_RPC_URL`, `POLICY_SPENDER`, `USDC`, `WALLET_ADDRESS`, `DEPLOYER_PRIVATE_KEY` (owner, demo only), `AGENT_PRIVATE_KEY`, `MERCHANT_ADDRESS`, `MERCHANT_PRIVATE_KEY` (Proviso Demo Merchant, signs receipts), `ALICE_RESOLVER`, `HOBBY_REGISTRY`, `NEEDS_REGISTRY`, `ENS_ROOT`, `WORLD_OIDC_CLIENT_ID`, `WORLD_OIDC_CLIENT_SECRET`, `PROVISO_ATTESTER_PRIVATE_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`, `BEDROCK_MODEL_ID`, `MONID_API_KEY` (product search), and the IDKit `WORLD_*` values.
 
 ### Reset for testing
 
@@ -122,7 +122,7 @@ Run the whole flow again from zero with the **same wallet and the same World ID*
 - **In the app:** Settings → *Reset & start over* (`POST /api/dev/reset`, session required). You are signed out; sign in again and onboard with the same handle.
 - **CLI:** `cd backend && npm run reset -- <wallet address | handle | all>` (`all` = every account not on the demo wallet). Works with the backend stopped (edits the state files) or running (goes through its loopback-only admin port, `PORT + 10`, so the running process cannot write the account back). Prints the tx hashes.
 
-What a reset does: the operator key calls `PolicySpender.resetFor(wallet)` (account row + World ID link deleted, spend `epoch` + 1 so every category counter restarts at 0) and unregisters `<handle>.proviso.eth`; then the account's requests, approvals, orders, sessions and account row are deleted. The next onboarding deploys a fresh resolver (new setup nonce in its salt), so onboarding limits land in a clean policy tree. The Proviso-held demo wallet (`alice.proviso.eth`) is never reset on chain. `HERO_ALLOW_RESET=0` turns the endpoint off.
+What a reset does: the operator key calls `PolicySpender.resetFor(wallet)` (account row + World ID link deleted, spend `epoch` + 1 so every category counter restarts at 0) and unregisters `<handle>.proviso.eth`; then the account's requests, approvals, orders, sessions and account row are deleted. The next onboarding deploys a fresh resolver (new setup nonce in its salt), so onboarding limits land in a clean policy tree. The Proviso-held demo wallet (`alice.proviso.eth`) is never reset on chain. `PROVISO_ALLOW_RESET=0` turns the endpoint off.
 
 What the admin (`resetFor`) can and cannot do: it can only switch an account **off**. It cannot set an account, raise a limit, re-enable an agent or spend: after a reset nothing moves until the **owner** signs a fresh `setupWithPermit` (a new permit nonce, so an old signature cannot be replayed). Owners can do the same themselves with `resetAccount()`. The USDC allowance stays but is useless without an account row.
 

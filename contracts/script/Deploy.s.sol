@@ -7,7 +7,7 @@ import {dnsEncode} from "./SetupEns.s.sol";
 
 /// forge script script/Deploy.s.sol --rpc-url sepolia --broadcast
 /// Env: OPERATOR_PK, WORLD_APP_ID, MERCHANT_RESOLVER, MERCHANT_REGISTRY (e.g. "verified.proviso.eth")
-///      optional: USDC, WORLD_ROUTER, WORLD_ACTION, HERO_ATTESTER (backend key that signs World ID for Agents approvals)
+///      optional: USDC, WORLD_ROUTER, WORLD_ACTION, PROVISO_ATTESTER (backend key that signs World ID for Agents approvals)
 /// admin (resetFor) = the operator/deployer.
 contract Deploy is Script {
     function run() external returns (PolicySpender ps) {
@@ -20,7 +20,7 @@ contract Deploy is Script {
             vm.envOr("WORLD_ACTION", string("buy")),
             IResolver(vm.envAddress("MERCHANT_RESOLVER")),
             dnsEncode(vm.envString("MERCHANT_REGISTRY")),
-            vm.envOr("HERO_ATTESTER", address(0xCD0d0eF44e493EAD7De8C043047C9D324a1776f5)),
+            vm.envOr("PROVISO_ATTESTER", address(0xCD0d0eF44e493EAD7De8C043047C9D324a1776f5)),
             vm.addr(pk)
         );
         vm.stopBroadcast();

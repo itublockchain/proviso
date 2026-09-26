@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # End-to-end check of "the user's own wallet" on a LOCAL Sepolia fork (no live transactions):
 # sign-in (session fixture) -> /api/wallet/start -> /w/<t>/connect (permit typed data) -> the user's ONE signature (cast, fresh
-# key with 0 ETH) -> /w/<t>/permit -> Hero sends everything -> ready -> request -> auto-band buy pulls MockUSDC from the user's
+# key with 0 ETH) -> /w/<t>/permit -> Proviso sends everything -> ready -> request -> auto-band buy pulls MockUSDC from the user's
 # wallet -> merchant order -> role and isolation checks -> "Reset & start over" -> the same wallet, World ID and handle onboard
 # again (fresh resolver, full budget) and buy -> the reset CLI. The user never sends a transaction.
 #   ./e2e-wallet.sh      starts anvil :8551 (if not running) and a fresh backend :8791 (state in $STATE); leaves both running
 # Stop: kill $(lsof -tiTCP:8791 -sTCP:LISTEN) $(lsof -tiTCP:8551 -sTCP:LISTEN)
 set -euo pipefail
 cd "$(dirname "$0")"
-RPC=http://127.0.0.1:8551 API=http://127.0.0.1:8791 STATE=${STATE:-/tmp/hero-e2e}
+RPC=http://127.0.0.1:8551 API=http://127.0.0.1:8791 STATE=${STATE:-/tmp/proviso-e2e}
 SPENDER=0x610803741c922384bcA07e40be3836E3191A9Fa6 USDC=0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e
 FACTORY=0x9e726Eb570beb6BCEb495AB8cdA7df517d4e841C REGISTRY=0x7B64a7118017572b38f7c880e13AeBA508cF98c1
 OP=0x73B30b7150D6cFf3EC35EF25a65E4b8625Cf4435 AGENT=0x79bbB630E4Ba04651cF8642697085E7b1f0AD823 MERCHANT=0xB4c42772dAeE7E4251bE9dc4782387C9881e6371
@@ -33,7 +33,7 @@ until_json() { # until_json <url> <jq-bool> <what>
 
 # --- fork + operator/agent gas (fork only) ---
 if ! lsof -tiTCP:8551 -sTCP:LISTEN >/dev/null; then
-  (set -a; . ./.env; exec nohup anvil --fork-url "$SEPOLIA_RPC_URL" --port 8551 --silent) >/tmp/hero-anvil.log 2>&1 &
+  (set -a; . ./.env; exec nohup anvil --fork-url "$SEPOLIA_RPC_URL" --port 8551 --silent) >/tmp/proviso-anvil.log 2>&1 &
   for _ in $(seq 30); do c block-number >/dev/null 2>&1 && break; sleep 1; done
 fi
 eq "$(c chain-id)" 11155111 "fork of Sepolia on :8551"
@@ -50,12 +50,12 @@ session() { node -e '
   fs.writeFileSync(f, JSON.stringify(out));
   console.log(t);' "$STATE" "$1"; }
 backend() {
-  SEPOLIA_RPC_URL=$RPC PORT=8791 POLICY_SPENDER=$SPENDER HERO_STATE_DIR=$STATE HERO_REQUIRE_LOGIN=1 nohup node --env-file=.env --import tsx server.ts >>/tmp/hero-e2e-8791.log 2>&1 &
+  SEPOLIA_RPC_URL=$RPC PORT=8791 POLICY_SPENDER=$SPENDER PROVISO_STATE_DIR=$STATE PROVISO_REQUIRE_LOGIN=1 nohup node --env-file=.env --import tsx server.ts >>/tmp/proviso-e2e-8791.log 2>&1 &
   for _ in $(seq 30); do curl -s $API/api/me >/dev/null && break; sleep 1; done; }
 stop_backend() { kill $(lsof -tiTCP:8791 -sTCP:LISTEN) 2>/dev/null || true; while lsof -tiTCP:8791 -sTCP:LISTEN >/dev/null; do sleep 0.2; done; }
 SUBA=e2e-a-$(date +%s) SUBB=e2e-b-$(date +%s)
 TA=$(session $SUBA) TB=$(session $SUBB)
-: >/tmp/hero-e2e-8791.log
+: >/tmp/proviso-e2e-8791.log
 backend
 
 # --- the user: a fresh key, onboarding budgets before the wallet exists ---
@@ -161,7 +161,7 @@ eq "$(api $TB GET /api/requests | jq --arg id $ID '[.[]|select(.id==$id)]|length
 eq "$(code $TB GET /api/requests/$ID)" 404 "second account can't read the first's request"
 eq "$(code $TB POST /api/requests/$ID/price -d '{"price":1}')" 404 "second account can't reprice the first's request"
 eq "$(api $TB GET /api/me | jq -r .walletStatus)" none "second account has its own (empty) wallet state"
-# --- demo wallet: the second account picks "Use demo wallet" (Hero-held alice key) ---
+# --- demo wallet: the second account picks "Use demo wallet" (Proviso-held alice key) ---
 eq "$(api $TB POST /api/wallet/demo | jq -r .walletStatus)" demo "demo wallet selected"
 CB=$(cast keccak "https://sandbox.auth.world.org|$SUBB")
 for _ in $(seq 30); do [ "$(c call $SPENDER 'continuity(address)(bytes32)' $OP)" = "$CB" ] && break; sleep 1; done
@@ -218,7 +218,7 @@ echo "    buy tx $(echo "$REQ" | jq -r '.activity[] | select(.text|startswith("B
 eq "$(num $SPENDER 'remaining(bytes,address)(uint256)' $HOBBY $U)" "$((1500000000 - P2 * 1000000))" "budget counts only the new buy"
 
 # --- the CLI, while the backend runs (loopback admin port) ---
-OUT=$(SEPOLIA_RPC_URL=$RPC PORT=8791 POLICY_SPENDER=$SPENDER HERO_STATE_DIR=$STATE node --env-file=.env --import tsx reset.ts $U)
+OUT=$(SEPOLIA_RPC_URL=$RPC PORT=8791 POLICY_SPENDER=$SPENDER PROVISO_STATE_DIR=$STATE node --env-file=.env --import tsx reset.ts $U)
 echo "$OUT" | sed 's/^/    /'
 echo "$OUT" | grep -q "via the running backend" && echo "$OUT" | grep -q "resetFor sent" && echo "$OUT" | grep -q "$ROOT unregistered" || fail "npm run reset -- <wallet>"
 eq "$(num $SPENDER 'epoch(address)(uint256)' $U)" 2 "CLI reset: epoch 2"

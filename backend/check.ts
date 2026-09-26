@@ -57,7 +57,7 @@ const reply = (status: number, body: object) => new Response(JSON.stringify(body
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: any, init?: any) => {
   const url = String(input);
-  if (url.startsWith("http://127.0.0.1:")) return realFetch(input, init); // the Hero API under test
+  if (url.startsWith("http://127.0.0.1:")) return realFetch(input, init); // the Proviso API under test
   if (url.endsWith("/.well-known/openid-configuration")) {
     return reply(200, { issuer: ISS, jwks_uri: `${ISS}/jwks`, authorization_endpoint: `${ISS}/authorize`, token_endpoint: `${ISS}/token`, device_authorization_endpoint: `${ISS}/device` });
   }
@@ -115,7 +115,7 @@ assert.equal((await pollDevice(d)).status, "expired");
 
 // --- Sign in with World ID: authorization code + S256 PKCE ---
 assert.equal(pkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"); // RFC 7636 App. B
-const CB = "https://hero.test/auth/world/callback";
+const CB = "https://proviso.test/auth/world/callback";
 let u = new URL(await loginUrl(CB));
 const p = Object.fromEntries(u.searchParams);
 assert.equal(`${u.origin}${u.pathname}`, `${ISS}/authorize`);
@@ -137,18 +137,18 @@ codeClaims = {}; // nonce missing from the token
 await assert.rejects(redeemLogin(att, "code-3", CB), /nonce mismatch/);
 
 // --- the same flow over HTTP, plus the session middleware (temp state dir: never touches the real accounts/sessions files) ---
-process.env.HERO_STATE_DIR = mkdtempSync(join(tmpdir(), "hero-check-"));
-writeFileSync(join(process.env.HERO_STATE_DIR, ".world-owner.json"), JSON.stringify({ iss: ISS, sub: "legacy-sub" })); // pre-accounts single owner
-process.env.PUBLIC_URL = "https://hero.test/";
-delete process.env.HERO_REQUIRE_LOGIN;
+process.env.PROVISO_STATE_DIR = mkdtempSync(join(tmpdir(), "proviso-check-"));
+writeFileSync(join(process.env.PROVISO_STATE_DIR, ".world-owner.json"), JSON.stringify({ iss: ISS, sub: "legacy-sub" })); // pre-accounts single owner
+process.env.PUBLIC_URL = "https://proviso.test/";
+delete process.env.PROVISO_REQUIRE_LOGIN;
 process.env.MERCHANT_PRIVATE_KEY = generatePrivateKey();
 const MERCHANT = privateKeyToAccount(process.env.MERCHANT_PRIVATE_KEY as `0x${string}`).address;
 process.env.MERCHANT_ADDRESS = MERCHANT;
-const { mountHero, demoPrice, timeline, saveState, loadState } = await import("./hero.js");
+const { mountProviso, demoPrice, timeline, saveState, loadState } = await import("./proviso.js");
 const { default: express } = await import("express");
 const app = express();
 app.use(express.json());
-mountHero(app, { searchProducts: async () => [] } as any); // offline: no live listings
+mountProviso(app, { searchProducts: async () => [] } as any); // offline: no live listings
 
 // --- Monid listings: map both sources, drop used/rental/pawn/foreign-currency/accessory rows, dedupe, rank, one row per store ---
 const { fromGoogle, fromAmazon, rank, perStore } = await import("./monid.js");
@@ -209,7 +209,7 @@ sp = await start();
 codeClaims = { nonce: sp.get("nonce") };
 const { session } = await callback({ code: "c", state: sp.get("state")! }); // sign-in creates alice's account
 assert.match(session, /^[A-Za-z0-9_-]{43}$/);
-const stateDir = process.env.HERO_STATE_DIR;
+const stateDir = process.env.PROVISO_STATE_DIR;
 const accts = JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"));
 assert.equal(accts[`${ISS}|alice-sub`].mode, "none");
 assert.equal(accts[`${ISS}|legacy-sub`].mode, "demo"); // migrated owner keeps the demo wallet
@@ -339,7 +339,7 @@ for (const handle of ["Bad Handle", "hobby", "ab", 7]) assert.equal((await post(
 assert.equal((await post("/api/wallet/start", mallory, { limits: { toString: 5 } })).status, 400);
 const ws = await (await post("/api/wallet/start", mallory, { handle: "mallory" })).json();
 const tok = new URL(ws.pageUrl).pathname.split("/").pop();
-assert.deepEqual(ws, { url: `https://link.metamask.io/dapp/hero.test/w/${tok}`, pageUrl: `https://hero.test/w/${tok}`, ensName: "mallory.proviso.eth" });
+assert.deepEqual(ws, { url: `https://link.metamask.io/dapp/proviso.test/w/${tok}`, pageUrl: `https://proviso.test/w/${tok}`, ensName: "mallory.proviso.eth" });
 assert.match((await get(`/w/${tok}`)).headers.get("content-type")!, /^text\/html/);
 assert.deepEqual(await (await get(`/w/${tok}/status`)).json(),
   { signed: false, done: { resolver: false, name: false, account: false }, ready: false, ensName: "mallory.proviso.eth", address: "", txs: [] });
@@ -348,16 +348,16 @@ assert.equal((await post(`/w/${tok}/connect`, undefined, { address: "0x000000000
 assert.equal((await post(`/w/${tok}/permit`, undefined, { signature: "0x" + "11".repeat(65) })).status, 503);
 assert.equal((await (await post("/api/wallet/demo", mallory, {})).json()).walletStatus, "demo");
 // "Reset & start over": own account only, files only here (no chain); the session ends with it
-process.env.HERO_ALLOW_RESET = "0";
+process.env.PROVISO_ALLOW_RESET = "0";
 assert.equal((await post("/api/dev/reset", mallory, {})).status, 403);
-delete process.env.HERO_ALLOW_RESET;
+delete process.env.PROVISO_ALLOW_RESET;
 assert.equal((await post("/api/dev/reset", undefined, {})).status, 401);
 assert.deepEqual(await (await post("/api/dev/reset", mallory, {})).json(), { ok: true, reset: { chain: false, ens: null, requests: 1, orders: 0, txs: [] } });
 assert.equal((await get("/api/me", mallory)).status, 401);
 assert.equal(JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"))[`${ISS}|mallory-sub`], undefined);
 assert.ok(!readFileSync(join(stateDir, ".state.json"), "utf8").includes(dup[2]));
 assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]); // other accounts untouched
-const { mergeDraft, statusLine, draftProblem } = await import("./hero.js");
+const { mergeDraft, statusLine, draftProblem } = await import("./proviso.js");
 const okDraft = { title: "TV", category: "Hobby", autoUsd: 400, maxUsd: 500, deadline: new Date(Date.now() + 86_400_000).toISOString() };
 assert.equal(draftProblem(okDraft), undefined);
 assert.match(draftProblem({ ...okDraft, autoUsd: 600 })!, /can't be above/);
@@ -373,11 +373,11 @@ const m0 = mergeDraft(h0, { title: "Sony TV", autoUsd: null, maxUsd: "600", cate
 assert.deepEqual([m0.title, m0.autoUsd, m0.maxUsd, m0.category, m0.deadline], ["Sony TV", 480, 600, "Needs", h0.deadline]);
 assert.equal(mergeDraft(h0, { autoUsd: 900, maxUsd: 500 }).autoUsd, 500); // auto never above max
 assert.deepEqual(mergeDraft(h0, undefined), h0);
-const { resetTarget } = await import("./hero.js");
+const { resetTarget } = await import("./proviso.js");
 await assert.rejects(resetTarget("nobody"), /no account matches/);
 assert.equal((await get("/api/logout", session, "POST")).status, 200);
 assert.equal((await get("/api/me", session)).status, 401); // logged out
-process.env.HERO_REQUIRE_LOGIN = "0";
+process.env.PROVISO_REQUIRE_LOGIN = "0";
 r = await get("/api/me");
 assert.equal(r.status, 200);
 const anon = await r.json();

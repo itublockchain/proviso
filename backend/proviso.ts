@@ -1,4 +1,4 @@
-// Hero API for the iOS app: requests -> time-aware strategy -> ENS policy bands -> auto-buy or World-approved buy.
+// Proviso API for the iOS app: requests -> time-aware strategy -> ENS policy bands -> auto-buy or World-approved buy.
 import type { Express, Request, Response } from "express";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -39,7 +39,7 @@ const EVENTS = [
 ];
 
 type Draft = { title: string; query: string; category: string; autoUsd: number; maxUsd: number; deadline: string };
-/** Whose money and policy tree a request uses: the account's own wallet + resolver, or the Hero-held demo wallet (alice). */
+/** Whose money and policy tree a request uses: the account's own wallet + resolver, or the Proviso-held demo wallet (alice). */
 type Ctx = { acct?: string; demo: boolean; payer?: Hex; root: string; resolver?: Hex; continuity?: Hex };
 type StoreOffer = { store: string; price: number; url: string; image?: string; rating?: number; source: string };
 type Req = Draft & {
@@ -64,17 +64,17 @@ type Approval = {
   closed?: boolean; // denial/expiry already applied to the request
 };
 
-// Local state files (gitignored); HERO_STATE_DIR lets check.ts use a temp dir.
-const stateFile = (name: string) => (process.env.HERO_STATE_DIR ? `${process.env.HERO_STATE_DIR}/${name}` : new URL(`./${name}`, import.meta.url));
+// Local state files (gitignored); PROVISO_STATE_DIR lets check.ts use a temp dir.
+const stateFile = (name: string) => (process.env.PROVISO_STATE_DIR ? `${process.env.PROVISO_STATE_DIR}/${name}` : new URL(`./${name}`, import.meta.url));
 const load = (f: string | URL) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return undefined; } };
 
-// One account per World ID (key `${iss}|${sub}`): "wallet" = the user's own MetaMask wallet + resolver, "demo" = the Hero-held alice wallet.
+// One account per World ID (key `${iss}|${sub}`): "wallet" = the user's own MetaMask wallet + resolver, "demo" = the Proviso-held alice wallet.
 type Mode = "none" | "wallet" | "demo";
 type Account = {
   key: string; iss: string; sub: string; continuity: Hex; mode: Mode;
   handle: string; root: string; wallet?: Hex; resolver?: Hex; limits: Record<string, number>;
   tokenHash?: string; tokenExp?: number; provisioned?: boolean; ready?: boolean;
-  permit?: Hex; txs?: Hex[]; // the user's one setup signature (USDC permit) and Hero's provisioning tx hashes
+  permit?: Hex; txs?: Hex[]; // the user's one setup signature (USDC permit) and Proviso's provisioning tx hashes
   setupNonce?: string; // in the resolver's CREATE2 salt: after a reset the same wallet + handle get a fresh resolver
   spender?: Hex; // the PolicySpender this wallet was set up on
 };
@@ -365,7 +365,7 @@ function dnsEncode(name: string): Hex {
   return toHex(new Uint8Array([...parts, 0]));
 }
 
-/** The request's owner context: a wallet account's own wallet + resolver, else the Hero-held demo wallet. */
+/** The request's owner context: a wallet account's own wallet + resolver, else the Proviso-held demo wallet. */
 function ctxOf(a?: Account): Ctx {
   if (a?.mode === "wallet") return { acct: a.key, demo: false, payer: a.wallet, root: a.root, resolver: a.resolver, continuity: a.continuity };
   return { acct: a?.key, demo: true, payer: CHAIN.payer, root: DEMO_ROOT, resolver: ENS.resolver, continuity: a?.continuity };
@@ -397,7 +397,7 @@ async function sendBuy(order: ReturnType<typeof makeOrder>, proof?: any): Promis
   return send(CHAIN.agentKey, CHAIN.spender, SPENDER_ABI, "buy", [order, human]);
 }
 
-const attesterKey = isKey(process.env.HERO_ATTESTER_PRIVATE_KEY);
+const attesterKey = isKey(process.env.PROVISO_ATTESTER_PRIVATE_KEY);
 
 /** Attester signs "the payer's linked World ID freshly approved this exact order"; the agent submits buyApproved(). */
 async function sendBuyApproved(order: ReturnType<typeof makeOrder>, authTime: number, continuity?: Hex): Promise<Hex | undefined> {
@@ -663,7 +663,7 @@ async function doProvision(a: Account) {
   const failed = (await Promise.allSettled(txs.map((p) => p.then((h) => void a.txs!.push(h))))).find((x) => x.status === "rejected");
   saveAccounts();
   if (failed) throw (failed as PromiseRejectedResult).reason;
-  // Hero must end up with no admin rights over the user's resolver
+  // Proviso must end up with no admin rights over the user's resolver
   const [f, o] = await Promise.all([FACTORY, OPERATOR!].map((x) => pub.readContract({ address: res, abi: ENS_ABI, functionName: "roles", args: [0n, x] })));
   if (f !== 0n || o !== 0n) throw new Error(`resolver ${res}: Proviso holds root roles (factory ${f}, operator ${o})`);
   a.provisioned = true;
@@ -674,7 +674,7 @@ async function doProvision(a: Account) {
 
 type WalletState = { signed: boolean; done: { resolver: boolean; name: boolean; account: boolean }; ready: boolean };
 const stateCache = new Map<string, { at: number; p: Promise<WalletState> }>();
-/** Read from chain (cached 3 s): which of Hero's setup steps landed; ready = resolver deployed + account/continuity set + allowance. */
+/** Read from chain (cached 3 s): which of Proviso's setup steps landed; ready = resolver deployed + account/continuity set + allowance. */
 function walletState(a: Account): Promise<WalletState> {
   const hit = stateCache.get(a.key);
   if (hit && Date.now() - hit.at < 3000) return hit.p;
@@ -1097,7 +1097,7 @@ async function setupRequest(r: Req, deps: Deps) {
   await strategize(r).catch((e) => note(`Could not plan the timing (AI): ${errText(e)}. Proviso still buys inside your rules.`, true));
 }
 
-export function mountHero(app: Express, deps: Deps) {
+export function mountProviso(app: Express, deps: Deps) {
   // usernames of wallets that must set up again: freed so the same handle can be registered with the new setup
   if (walletChain()) for (const n of staleNames) void pub.readContract({ address: ROOT_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [n.handle] })
     .then((res): Promise<Hex | undefined> | undefined => (n.resolver && same(res, n.resolver) ? send(ENS.ownerKey!, ROOT_REGISTRY, ENS_ABI, "unregister", [BigInt(keccak256(stringToBytes(n.handle)))]) : undefined))
@@ -1127,7 +1127,7 @@ export function mountHero(app: Express, deps: Deps) {
       return back({ error: /^[a-z_]+$/.test(e.message) ? e.message : "invalid_id_token" });
     }
     const acct = accountFor(c.iss, c.sub);
-    // wallet users set their own continuity; only the Hero-held demo wallet's is set by Hero
+    // wallet users set their own continuity; only the Proviso-held demo wallet's is set by Proviso
     if (acct.mode === "demo") void syncDemoContinuity(acct).catch((e) => console.error("setContinuity", e?.shortMessage ?? e));
     back({ session: newSession(c) });
   });
@@ -1190,7 +1190,7 @@ export function mountHero(app: Express, deps: Deps) {
       res.status(502).json({ error: "chain_unavailable" });
     }
   });
-  // The user's one signature: verified here against the current permit (nonce, config), then Hero sends every tx.
+  // The user's one signature: verified here against the current permit (nonce, config), then Proviso sends every tx.
   app.post("/w/:t/permit", async (req, res) => {
     const a = byToken(req.params.t, true);
     if (!a) return res.status(404).json({ error: "link_expired" });
@@ -1227,13 +1227,13 @@ export function mountHero(app: Express, deps: Deps) {
     o ? res.json(orderView(o)) : res.status(404).json({ error: "not_found" });
   });
 
-  // Every /api route needs a session unless HERO_REQUIRE_LOGIN=0 (read per request).
+  // Every /api route needs a session unless PROVISO_REQUIRE_LOGIN=0 (read per request).
   app.use("/api", (req, res, next) => {
     res.on("finish", persist); // any /api call may have changed requests/approvals/orders
     const s = sessionOf(req);
     res.locals.session = s;
     res.locals.acct = s && accountFor(s.iss, s.sub);
-    if (!s && process.env.HERO_REQUIRE_LOGIN !== "0") return res.status(401).json({ error: "sign_in_required" });
+    if (!s && process.env.PROVISO_REQUIRE_LOGIN !== "0") return res.status(401).json({ error: "sign_in_required" });
     next();
   });
   const meView = async (res: Response) => {
@@ -1244,9 +1244,9 @@ export function mountHero(app: Express, deps: Deps) {
     };
   };
   app.get("/api/me", async (_req, res) => res.json(await meView(res)));
-  // "Reset & start over" (testnet, HERO_ALLOW_RESET=0 turns it off): wipes the caller's own account; the session ends with it.
+  // "Reset & start over" (testnet, PROVISO_ALLOW_RESET=0 turns it off): wipes the caller's own account; the session ends with it.
   app.post("/api/dev/reset", async (_req, res) => {
-    if (process.env.HERO_ALLOW_RESET === "0") return res.status(403).json({ error: "reset_disabled" });
+    if (process.env.PROVISO_ALLOW_RESET === "0") return res.status(403).json({ error: "reset_disabled" });
     const a = acctOf(res);
     if (!a) return res.status(401).json({ error: "sign_in_required" });
     try {
@@ -1280,7 +1280,7 @@ export function mountHero(app: Express, deps: Deps) {
     const base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
     res.json({ url: `https://link.metamask.io/dapp/${base.replace(/^https?:\/\//, "")}/w/${t}`, pageUrl: `${base}/w/${t}`, ensName: a.root });
   });
-  // "Use demo wallet": the Hero-held alice wallet; its on-chain continuity follows this account.
+  // "Use demo wallet": the Proviso-held alice wallet; its on-chain continuity follows this account.
   app.post("/api/wallet/demo", async (_req, res) => {
     const a = acctOf(res);
     if (!a) return res.status(401).json({ error: "sign_in_required" });
@@ -1379,7 +1379,7 @@ export function mountHero(app: Express, deps: Deps) {
     res.json(approvalView(a));
   });
 
-  // Legacy one-time link (device grant): points the Hero-held demo wallet's continuity at this World ID.
+  // Legacy one-time link (device grant): points the Proviso-held demo wallet's continuity at this World ID.
   app.post("/api/world/link", async (_req, res) => {
     if (!oidcEnabled()) return res.status(503).json({ error: "World ID for Agents is not configured" });
     try {

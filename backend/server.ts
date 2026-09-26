@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { keccak256, encodeAbiParameters, parseAbiParameters } from "viem";
 import { widgetHtml } from "./widget.js";
-import { mountHero, resetTarget } from "./hero.js";
+import { mountProviso, resetTarget } from "./proviso.js";
 import { searchProducts, type Offer } from "./monid.js";
 import QRCode from "qrcode";
 import { IDKit, orbLegacy, type IDKitRequest } from "@worldcoin/idkit-core";
@@ -215,13 +215,13 @@ app.post("/mcp", async (req, res) => {
   await transport.handleRequest(req, res, req.body);
 });
 app.get("/mcp", (_req, res) => res.status(405).end());
-mountHero(app, { searchProducts, startWorldApproval, advanceWorld });
+mountProviso(app, { searchProducts, startWorldApproval, advanceWorld });
 
 app.listen(PORT, () => console.log(`cartlock mcp on :${PORT}/mcp`));
 
 // `npm run reset` goes through this loopback-only listener while the backend runs, so the in-memory state it resets cannot be
 // written back over the files. Its own port: tunnels (ngrok) forward only PORT, and requests they forward arrive from 127.0.0.1 too.
-const ADMIN_PORT = Number(process.env.HERO_ADMIN_PORT ?? PORT + 10);
+const ADMIN_PORT = Number(process.env.PROVISO_ADMIN_PORT ?? PORT + 10);
 const admin = express();
 admin.use(express.json());
 admin.post("/reset", async (req, res) => {
