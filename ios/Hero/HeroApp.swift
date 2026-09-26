@@ -57,6 +57,19 @@ struct RootView: View {
         }
         .animation(.default, value: store.onboardingSeen)
         .animation(.default, value: store.walletStatus)
+        // Lives above the onboarding/sign-in/app switch, so a reset's toast survives the jump
+        // back to onboarding instead of dying with the Settings view it was shown from.
+        .overlay(alignment: .bottom) {
+            if let message = store.toastMessage {
+                ToastBanner(message: message)
+                    .padding(.bottom, 40)
+                    .task {
+                        try? await Task.sleep(for: .seconds(3))
+                        store.toastMessage = nil
+                    }
+            }
+        }
+        .animation(.default, value: store.toastMessage)
     }
 }
 

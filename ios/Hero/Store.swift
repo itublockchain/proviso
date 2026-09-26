@@ -28,6 +28,8 @@ final class Store {
     var showingComposer = false
     var approvalsPath: [String] = []
     var requestsPath: [String] = []
+    /// Set by `resetAndStartOver()`; shown as a toast that outlives the switch back to onboarding.
+    var toastMessage: String?
 
     /// Mandatory Sign in with World ID: `nil` while the session is still being checked at launch.
     var me: Me?
@@ -260,5 +262,30 @@ final class Store {
     func useDemoWallet() async throws {
         try await run { try await api.useDemoWallet() }
         await loadSession()
+    }
+
+    /// "Reset & start over": wipes the signed-in account on the backend (chain state, ENS name,
+    /// requests/orders) — the session is invalid right after, which is fine, we're about to clear
+    /// it locally anyway — then wipes local state so the same wallet + World ID can onboard again.
+    /// Any server failure (older/disabled dev endpoint, unreachable backend) still clears local
+    /// state: the point of this button is to unblock re-testing, not to gate it on the backend.
+    func resetAndStartOver() async {
+        let result = try? await api.resetEverything()
+        Keychain.token = nil
+        UserDefaults.standard.set(false, forKey: Self.demoSignedInKey)
+        me = .signedOut
+        requests = []
+        approvals = []
+        budgets = nil
+        approvalsPath = []
+        requestsPath = []
+        errorMessage = nil
+        if let result {
+            let namePart = result.ens.map { "name \($0) freed, " } ?? ""
+            toastMessage = "Reset: contract \(result.chain ? "✓" : "✗"), \(namePart)\(result.requests) requests, \(result.orders) orders"
+        } else {
+            toastMessage = "Server reset unavailable — local state cleared"
+        }
+        onboardingSeen = false
     }
 }

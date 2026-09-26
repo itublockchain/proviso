@@ -4,6 +4,8 @@ struct SettingsView: View {
     @Environment(Store.self) private var store
     @State private var showWalletSetup = false
     @AppStorage("hero.showDemoControls") private var showDemoControls = false
+    @State private var showResetConfirm = false
+    @State private var isResetting = false
 
     var body: some View {
         NavigationStack {
@@ -21,10 +23,35 @@ struct SettingsView: View {
             }
             .background(Theme.background)
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // Hidden backup for the reset row below: works even with demo controls off.
+                ToolbarItem(placement: .principal) {
+                    Text("Settings").font(.headline)
+                        .onTapGesture(count: 3) { showResetConfirm = true }
+                }
+            }
             .fullScreenCover(isPresented: $showWalletSetup) { WalletSetupView() }
             .onChange(of: store.walletStatus) { _, new in
                 if new == .ready { showWalletSetup = false }
             }
+            .confirmationDialog(
+                "Reset & start over?",
+                isPresented: $showResetConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Reset & start over", role: .destructive) { runReset() }
+            } message: {
+                Text("Deletes your Hero account, requests and orders, clears your wallet's setup on the contract and frees your name, so you can onboard again with the same wallet and World ID.")
+            }
+        }
+    }
+
+    private func runReset() {
+        isResetting = true
+        Task {
+            await store.resetAndStartOver()
+            isResetting = false
         }
     }
 
@@ -86,6 +113,20 @@ struct SettingsView: View {
                 Task { await store.loadAll() }
             }
             .padding(.vertical, 9)
+            if showDemoControls {
+                HairlineDivider()
+                Button(role: .destructive) { showResetConfirm = true } label: {
+                    HStack {
+                        Text("Reset & start over")
+                        if isResetting {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isResetting)
+                .padding(.vertical, 9)
+            }
             HairlineDivider()
         }
     }
