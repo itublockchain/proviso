@@ -20,7 +20,7 @@ struct RequestsListView: View {
                     ContentUnavailableView(
                         "No requests yet",
                         systemImage: "cart",
-                        description: Text("Tap + to tell Hero what to buy.")
+                        description: Text("Tap + to tell Proviso what to buy.")
                     )
                 } else {
                     List {

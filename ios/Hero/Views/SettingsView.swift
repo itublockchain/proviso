@@ -42,7 +42,7 @@ struct SettingsView: View {
             ) {
                 Button("Reset & start over", role: .destructive) { runReset() }
             } message: {
-                Text("Deletes your Hero account, requests and orders, clears your wallet's setup on the contract and frees your name, so you can onboard again with the same wallet and World ID.")
+                Text("Deletes your Proviso account, requests and orders, clears your wallet's setup on the contract and frees your name, so you can onboard again with the same wallet and World ID.")
             }
         }
     }
@@ -135,7 +135,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "Wallet").padding(.bottom, Theme.spacingS)
             HairlineDivider()
-            settingsRow("Kind", store.walletStatus == .demo ? "Demo wallet (held by Hero)" : "Your wallet")
+            settingsRow("Kind", store.walletStatus == .demo ? "Demo wallet (held by Proviso)" : "Your wallet")
             HairlineDivider()
             Link(destination: URL(string: "https://explorer.ens.dev/\(wallet.ensRoot)") ?? URL(string: "https://explorer.ens.dev")!) {
                 settingsRow("ENS name", wallet.ensRoot)

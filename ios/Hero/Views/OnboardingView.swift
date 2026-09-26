@@ -6,13 +6,13 @@ private struct OnboardingContent {
 }
 
 private let onboardingPages: [OnboardingContent] = [
-    .init(title: "Hero", subtitle: "Your shopping agent. Your wallet. Your rules."),
-    .init(title: "Just say what you want.", subtitle: "A Sony TV before next month, never above $500. Hero takes it from there."),
-    .init(title: "It waits for the right moment.", subtitle: "Hero watches prices and upcoming sales, and buys when the price is right — not when you happen to ask."),
-    .init(title: "Your money never leaves your wallet.", subtitle: "No deposits, no agent wallet. Hero can only spend what your rules allow, straight from your own wallet."),
+    .init(title: "Proviso", subtitle: "Your shopping agent. Your wallet. Your rules."),
+    .init(title: "Just say what you want.", subtitle: "A Sony TV before next month, never above $500. Proviso takes it from there."),
+    .init(title: "It waits for the right moment.", subtitle: "Proviso watches prices and upcoming sales, and buys when the price is right — not when you happen to ask."),
+    .init(title: "Your money never leaves your wallet.", subtitle: "No deposits, no agent wallet. Proviso can only spend what your rules allow, straight from your own wallet."),
     .init(title: "Rules that live on your name.", subtitle: "Buy on your own under $400. Ask me up to $500. Never above that. Your rules are saved on your ENS name, where any app — and the payment contract — can read them."),
     .init(title: "Budgets that take care of themselves.", subtitle: "Give hobbies $1,000 a month. Every request shares it, and it resets on its own."),
-    .init(title: "You approve what matters.", subtitle: "Above your limit, Hero asks you — and only you — to confirm with World ID, right in the moment."),
+    .init(title: "You approve what matters.", subtitle: "Above your limit, Proviso asks you — and only you — to confirm with World ID, right in the moment."),
     .init(title: "Tricks don't work.", subtitle: "Even if a website tries to fool the agent, the rules are enforced by the payment contract itself. Wrong shop, wrong price, over budget: it simply can't pay."),
 ]
 
@@ -163,7 +163,7 @@ private struct IllustrationStage: View {
     }
 }
 
-// MARK: - Page 1: Hero mark
+// MARK: - Page 1: Proviso mark
 
 private struct HeroMarkIllustration: View {
     let appeared: Bool

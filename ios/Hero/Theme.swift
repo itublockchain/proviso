@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// App-wide product name constant.
-let heroAppName = "Hero"
+let heroAppName = "Proviso"
 
 extension Color {
     /// A color that adapts between light and dark mode without needing an asset catalog entry.

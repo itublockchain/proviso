@@ -11,7 +11,7 @@ enum WorldSignInError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .cancelled: return "You cancelled in World ID"
-        case .notOwner: return "This Hero account belongs to a different World ID"
+        case .notOwner: return "This Proviso account belongs to a different World ID"
         case .worldID3NotAvailable: return "This World ID can't sign in here yet"
         case .other: return "Sign-in failed, try again"
         }

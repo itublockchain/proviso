@@ -258,7 +258,7 @@ final class Store {
         return start
     }
 
-    /// "Use demo wallet" — switches the account to the Hero-held demo wallet.
+    /// "Use demo wallet" — switches the account to the Proviso-held demo wallet.
     func useDemoWallet() async throws {
         try await run { try await api.useDemoWallet() }
         await loadSession()

@@ -71,7 +71,7 @@ struct WalletSetupView: View {
                 }
 
                 VStack(alignment: .leading, spacing: Theme.spacingS) {
-                    stepRow("Hero's contract may spend from your wallet — no deposits")
+                    stepRow("Proviso's contract may spend from your wallet — no deposits")
                     stepRow("Only within your rules, which live at \(previewName)")
                     stepRow("Bigger buys need your World ID")
                 }
@@ -102,7 +102,7 @@ struct WalletSetupView: View {
     private var statusLine: some View {
         HStack(spacing: Theme.spacingS) {
             ProgressView()
-            Text("Waiting for MetaMask… Hero is setting up \(previewName)")
+            Text("Waiting for MetaMask… Proviso is setting up \(previewName)")
                 .font(.subheadline)
                 .foregroundStyle(Theme.textSecondary)
         }
@@ -130,7 +130,7 @@ struct WalletSetupView: View {
                     }
                     .font(.footnote)
                 }
-                Button("Use demo wallet (held by Hero)") { Task { await useDemoWallet() } }
+                Button("Use demo wallet (held by Proviso)") { Task { await useDemoWallet() } }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textSecondary)
                 Button("Cancel") { cancelWaiting() }
@@ -161,7 +161,7 @@ struct WalletSetupView: View {
                     }
                 }
 
-                Button("Use demo wallet (held by Hero)") { Task { await useDemoWallet() } }
+                Button("Use demo wallet (held by Proviso)") { Task { await useDemoWallet() } }
                     .font(.subheadline)
                     .foregroundStyle(Theme.textSecondary)
                     .disabled(isConnecting)

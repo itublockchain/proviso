@@ -151,7 +151,7 @@ enum MockData {
             id: "HD-1A2B3C4D",
             status: "delivered",
             simulated: true,
-            merchantName: "Hero Demo Merchant",
+            merchantName: "Proviso Demo Merchant",
             merchantAddress: "0xB4c400000000000000000000000000000006371",
             registry: "hero-verified.eth",
             merchantVerified: true,
@@ -423,7 +423,7 @@ actor MockAPI: API {
         )
     }
 
-    /// POST api/wallet/demo — switches the mock account to the Hero-held demo wallet right away.
+    /// POST api/wallet/demo — switches the mock account to the Proviso-held demo wallet right away.
     func useDemoWallet() async throws { walletStatus = .demo }
 
     /// Simulates the user finishing the 3 MetaMask signatures a few seconds after startWallet().
@@ -477,7 +477,7 @@ actor MockAPI: API {
                     id: orderId,
                     status: "paid",
                     simulated: true,
-                    merchantName: "Hero Demo Merchant",
+                    merchantName: "Proviso Demo Merchant",
                     merchantAddress: "0xB4c400000000000000000000000000000006371",
                     registry: "hero-verified.eth",
                     merchantVerified: true,

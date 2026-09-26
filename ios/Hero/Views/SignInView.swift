@@ -21,7 +21,7 @@ struct SignInPanel: View {
                     .font(.system(size: 30, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
-                Text("One verified human, one account. Hero works for you and no one else.")
+                Text("One verified human, one account. Proviso works for you and no one else.")
                     .font(.body)
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)

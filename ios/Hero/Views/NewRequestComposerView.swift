@@ -95,8 +95,8 @@ struct NewRequestComposerView: View {
             .animation(.easeInOut(duration: 0.25), value: submitStep)
             .sensoryFeedback(.impact(weight: .medium), trigger: isSubmitting) { _, new in new }
 
-            Text(isSubmitting ? "Hero is checking every store and signing your rules. This takes a few seconds."
-                              : "Your rules are saved on your ENS name. Above your max, Hero simply can't pay.")
+            Text(isSubmitting ? "Proviso is checking every store and signing your rules. This takes a few seconds."
+                              : "Your rules are saved on your ENS name. Above your max, Proviso simply can't pay.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -111,7 +111,7 @@ struct NewRequestComposerView: View {
     private var inputBar: some View {
         GlassEffectContainer(spacing: 8) {
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Ask Hero to buy something…", text: $input, axis: .vertical)
+                TextField("Ask Proviso to buy something…", text: $input, axis: .vertical)
                     .lineLimit(1...5)
                     .focused($inputFocused)
                     .submitLabel(.send)
@@ -209,7 +209,7 @@ private struct DraftCard: View {
         VStack(alignment: .leading, spacing: 16) {
             SectionHeader(title: "Your rules")
 
-            TextField("What should Hero buy?", text: $draft.title, axis: .vertical)
+            TextField("What should Proviso buy?", text: $draft.title, axis: .vertical)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
 

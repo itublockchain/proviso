@@ -262,7 +262,7 @@ private struct OrderSection: View {
             }
             .padding(.top, 4)
 
-            Text("Payment and your rules are real (Ethereum Sepolia). Store checkout and shipping are simulated by Hero's demo merchant — 7 days compressed to 45 seconds.")
+            Text("Payment and your rules are real (Ethereum Sepolia). Store checkout and shipping are simulated by Proviso's demo merchant — 7 days compressed to 45 seconds.")
                 .font(.caption2)
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.top, 2)
@@ -513,8 +513,8 @@ private struct PriceHistoryChart: View {
     }
 }
 
-/// Live prices for this product at every store Hero compared (Monid: Google Shopping + Amazon), cheapest first.
-/// Tapping a row opens the store's listing; Hero never checks out there.
+/// Live prices for this product at every store Proviso compared (Monid: Google Shopping + Amazon), cheapest first.
+/// Tapping a row opens the store's listing; Proviso never checks out there.
 private struct StoresSection: View {
     let offers: [StoreOffer]
     @State private var safariURL: URL?

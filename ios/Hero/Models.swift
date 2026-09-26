@@ -91,7 +91,7 @@ struct HeroRequest: Codable, Identifiable, Hashable {
     var events: [SaleEvent]
     var activity: [ActivityEntry]
     var boughtAt: Date? = nil
-    /// Post-payment fulfillment from Hero's simulated demo merchant, once bought.
+    /// Post-payment fulfillment from Proviso's simulated demo merchant, once bought.
     var order: MerchantOrder? = nil
     /// Live prices for the chosen product at up to 5 stores (Monid: Google Shopping + Amazon), cheapest first.
     var offers: [StoreOffer]? = nil
