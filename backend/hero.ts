@@ -531,7 +531,25 @@ function publishStatuses() {
       send(ENS.ownerKey!, r.ctx.resolver!, ENS_ABI, "setText", [dnsEncode(r.ensName), "description", desc]).catch(failed("description write")),
     ]));
   }
+  // category budgets: <category>.<username>.<ROOT> says what is left this period, same two records
+  const ctxs = [ctxOf(undefined), ...[...accounts.values()].filter((a) => a.mode === "wallet" && a.ready).map(ctxOf)];
+  for (const c of ctxs) {
+    if (!c.resolver) continue;
+    for (const cat of c.demo ? [...categories.keys()] : Object.keys(accounts.get(c.acct!)?.limits ?? {})) {
+      const name = `${cat.toLowerCase()}.${c.root}`, limit = limitOf(c, cat), spent = spentThisPeriod(c, cat);
+      const line = `${usd(Math.max(0, limit - spent))} of ${usd(limit)} left this period (spent ${usd(spent)}), resets ${periodEnds().slice(0, 10)}`;
+      const k = `${c.resolver}|${name}`;
+      if (publishedBudgets.get(k) === line) continue;
+      publishedBudgets.set(k, line);
+      const failed = (e: any) => { console.error("budget status", name, e?.shortMessage ?? e?.message ?? e); publishedBudgets.delete(k); };
+      void Promise.all([
+        send(CHAIN.agentKey!, c.resolver, ENS_ABI, "setText", [dnsEncode(name), "status", line]),
+        send(ENS.ownerKey!, c.resolver, ENS_ABI, "setText", [dnsEncode(name), "description", `${categoryTexts(cat, limit).description}. Now: ${line}`]),
+      ]).catch(failed);
+    }
+  }
 }
+const publishedBudgets = new Map<string, string>(); // resolver|category name -> last line; ponytail: in memory, a restart re-publishes each once
 
 /** Demo wallet: PolicySpender.continuity(alice) must be this account's World ID for its mid-band approvals (last demo user wins). */
 async function syncDemoContinuity(a: Account): Promise<Hex | undefined> {

@@ -132,6 +132,8 @@ for _ in $(seq 40); do [ -n "$(text "$NAME" status)" ] && [ -n "$(text "$NAME" d
 DESC=$(text "$NAME" description) ST=$(text "$NAME" status)
 eq "${DESC%%. Now: *}" "Proviso policy: buys on its own up to \$100, asks the owner up to \$200, until ${DEADLINE:0:10}" "UR text description = the rules"
 eq "${DESC#*. Now: }" "$ST" "description ends with the agent's live status ($ST)"
+for _ in $(seq 40); do [ -n "$(text "hobby.$ROOT" status)" ] && break; sleep 1; done
+CS=$(text "hobby.$ROOT" status); case "$CS" in *"left this period"*) echo "ok  hobby.$ROOT status: $CS";; *) fail "category status: $CS";; esac
 eq "$(text "$NAME" max)" "200 USDC" "UR text max"
 eq "$(text "hobby.$ROOT" limit)" "1500 USDC" "UR text limit on the category (resolver initializer)"
 
