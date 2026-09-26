@@ -654,7 +654,9 @@ async function onPrice(r: Req, price: number, deps: Deps, payTo?: Hex) {
     try {
       tx = await sendBuy(order);
     } catch (e: any) {
-      const txHash = /0x[0-9a-fA-F]{64}/.exec(String(e?.message))?.[0]; // set only when a sent tx reverted on chain
+      // Only a mined-and-reverted tx has a hash (broadcast throws "<fn> reverted: <hash>"); a pre-flight revert's
+      // message carries calldata, whose first 32 bytes must not be mistaken for a tx hash.
+      const txHash = /reverted: (0x[0-9a-fA-F]{64})/.exec(String(e?.message))?.[1] as Hex | undefined;
       const onChain = !!(CHAIN.spender && CHAIN.agentKey && order.payer !== ZERO); // same test as sendBuy
       const text = payTo
         ? `Prompt-injected checkout tried to pay 0x…${payTo.slice(-4)} — blocked by the contract (${reason(e)})${txHash ? "" : onChain ? ", rejected before sending" : " (demo, no chain)"}`
