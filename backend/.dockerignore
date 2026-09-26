@@ -1,0 +1,12 @@
+.env
+.env.*
+.state.json
+.state.json.tmp
+.accounts.json
+.sessions.json
+.world-owner.json
+.monid-cache.json
+node_modules
+dev
+*.log
+.DS_Store
