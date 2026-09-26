@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
+import {Script, console} from "forge-std/Script.sol";
+import {PolicySpender, IERC20, IWorldID, IResolver} from "../src/PolicySpender.sol";
+import {dnsEncode} from "./SetupEns.s.sol";
+
+/// forge script script/Deploy.s.sol --rpc-url sepolia --broadcast
+/// Env: OPERATOR_PK, WORLD_APP_ID, MERCHANT_RESOLVER, MERCHANT_REGISTRY (e.g. "heromerchants.eth")
+///      optional: USDC, WORLD_ROUTER, WORLD_ACTION
+contract Deploy is Script {
+    function run() external returns (PolicySpender ps) {
+        vm.startBroadcast(vm.envUint("OPERATOR_PK"));
+        ps = new PolicySpender(
+            IERC20(vm.envOr("USDC", address(0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238))),
+            IWorldID(vm.envOr("WORLD_ROUTER", address(0x469449f251692E0779667583026b5A1E99512157))),
+            vm.envString("WORLD_APP_ID"),
+            vm.envOr("WORLD_ACTION", string("buy")),
+            IResolver(vm.envAddress("MERCHANT_RESOLVER")),
+            dnsEncode(vm.envString("MERCHANT_REGISTRY"))
+        );
+        vm.stopBroadcast();
+        console.log("POLICY_SPENDER", address(ps));
+    }
+}

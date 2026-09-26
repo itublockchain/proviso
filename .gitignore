@@ -1,0 +1,14 @@
+.env
+.env.*
+node_modules/
+.DS_Store
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/deployments/setup.json
+
+# xcode
+ios/build/
+ios/**/xcuserdata/
