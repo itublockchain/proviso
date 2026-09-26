@@ -1,3 +1,5 @@
+<img width="4500" height="1500" alt="banner1-3" src="https://github.com/user-attachments/assets/a9e64f5e-ce25-4937-9bc2-a7017f247a65" />
+
 # Proviso
 
 **An AI shopping agent that spends from your own wallet — but only inside rules you wrote to ENS, and only with your fresh World ID approval when it matters.**
