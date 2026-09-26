@@ -59,7 +59,7 @@ final class Store {
     }
 
     init() {
-        self.demoMode = UserDefaults.standard.object(forKey: "proviso.demoMode") as? Bool ?? true
+        self.demoMode = UserDefaults.standard.object(forKey: "proviso.demoMode") as? Bool ?? false // live by default; demo mode is opt-in in Settings
         self.backendURLString = UserDefaults.standard.string(forKey: "proviso.backendURL") ?? Self.defaultBackend
         self.onboardingSeen = UserDefaults.standard.bool(forKey: "proviso.onboardingSeen")
     }

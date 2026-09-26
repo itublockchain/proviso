@@ -90,7 +90,7 @@ struct WalletSetupView: View {
     private var handleField: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Choose your name").font(.caption.weight(.semibold)).foregroundStyle(Theme.textSecondary)
-            TextField("auto", text: $handle)
+            TextField("yourname", text: $handle)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .onChange(of: handle) { _, new in handle = Self.sanitize(new) }

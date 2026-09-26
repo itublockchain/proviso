@@ -35,7 +35,7 @@ struct ApprovalDetailView: View {
                 } else {
                     ProvisoCard {
                         VStack(alignment: .leading, spacing: 6) {
-                            Label(approval.status == .expired ? "Approval expired" : "Purchase blocked",
+                            Label(approval.status == .expired ? "Approval expired" : approval.denyReason?.localizedCaseInsensitiveContains("declined") == true ? "You declined" : "Purchase blocked",
                                   systemImage: "xmark.shield.fill")
                                 .font(.headline)
                                 .foregroundStyle(Theme.accentRed)
