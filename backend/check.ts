@@ -53,8 +53,9 @@ globalThis.fetch = (async (input: any, init?: any) => {
   }
   if (url === `${ISS}/jwks`) return reply(200, { keys: [jwk] });
   const body = new URLSearchParams(init.body);
-  assert.equal(body.get("client_secret"), "secret-test"); // client_secret_post
-  assert.equal(init.headers.authorization, undefined);
+  assert.equal(init.headers.authorization, `Basic ${Buffer.from("client-test:secret-test").toString("base64")}`); // client_secret_basic
+  assert.equal(body.get("client_secret"), null); // never mixed with post
+
   if (url === `${ISS}/device`) {
     assert.equal(body.get("scope"), "openid");
     return reply(200, { device_code: "dev-secret", user_code: "ABCD-EFGH", verification_uri: `${ISS}/device`, verification_uri_complete: `${ISS}/device?user_code=ABCD-EFGH`, expires_in: 1200, interval: 0 });

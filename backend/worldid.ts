@@ -8,6 +8,8 @@ export const OIDC = {
   issuer: (process.env.WORLD_OIDC_ISSUER || "https://sandbox.auth.world.org").replace(/\/$/, ""),
   clientId: process.env.WORLD_OIDC_CLIENT_ID ?? "",
   secret: process.env.WORLD_OIDC_CLIENT_SECRET ?? "",
+  // must match the method registered in the portal (immutable); the portal default is client_secret_basic
+  auth: process.env.WORLD_OIDC_TOKEN_AUTH_METHOD === "client_secret_post" ? "client_secret_post" : "client_secret_basic",
 };
 export const oidcEnabled = () => !!(OIDC.clientId && OIDC.secret);
 
@@ -77,11 +79,18 @@ export type DeviceResult =
   | { status: "ok"; iss: string; sub: string; authTime: number }
   | { status: "denied" | "expired" | "error"; error: string };
 
+const formEnc = (v: string) => encodeURIComponent(v).replace(/%20/g, "+");
+/** Token-endpoint style POST with the registered client authentication (never both methods at once). */
 const form = (url: string, fields: Record<string, string>) =>
   fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" }, // client_secret_post: no Authorization header
-    body: new URLSearchParams({ client_id: OIDC.clientId, client_secret: OIDC.secret, ...fields }),
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      ...(OIDC.auth === "client_secret_basic"
+        ? { authorization: `Basic ${Buffer.from(`${formEnc(OIDC.clientId)}:${formEnc(OIDC.secret)}`).toString("base64")}` }
+        : {}),
+    },
+    body: new URLSearchParams(OIDC.auth === "client_secret_post" ? { client_id: OIDC.clientId, client_secret: OIDC.secret, ...fields } : fields),
     signal: AbortSignal.timeout(10_000),
   });
 
