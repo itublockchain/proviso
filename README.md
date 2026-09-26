@@ -10,7 +10,7 @@ You tell Proviso what you want (“a Sony 55-inch TV, must arrive within a month
 | `auto` < price ≤ `max` | The agent must get **you**, a verified human, to approve **this exact order** with World ID, right now. |
 | > `max` or over the category budget | Impossible. The contract reverts, whatever the agent was told. |
 
-Built at ETHGlobal Tokyo 2026.
+Built at ETHGlobal Tokyo 2026. Site: [proviso-1bt.pages.dev](https://proviso-1bt.pages.dev) (static, `site/`, deployed with Cloudflare Pages).
 
 ## Why
 
