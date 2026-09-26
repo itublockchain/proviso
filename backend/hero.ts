@@ -43,7 +43,7 @@ type Req = Draft & {
   acct?: string; ctx: Ctx; // owner account key (undefined = no session) and its context when the request was made
   id: string; imageUrl?: string; ensName: string; status: "watching" | "readyToBuy" | "needsApproval" | "bought" | "expired";
   currentPrice: number; targetPrice?: number; merchant?: string; offer?: Offer; boughtAt?: number; boughtPrice?: number;
-  offers?: StoreOffer[]; listPrice?: number; historyModeled?: boolean; // live store comparison (Monid); the 90-day history is modeled
+  offers?: StoreOffer[]; storesCompared?: number; listPrice?: number; historyModeled?: boolean; // live store comparison (Monid, top 5 kept); the 90-day history is modeled
   orderId?: string; // the merchant order (HD-…) of the current purchase
   strategy?: { summary: string; bullets: string[]; buyBy: string; confidence: number };
   priceHistory: { date: string; price: number }[]; events: { date: string; name: string }[];
@@ -226,7 +226,7 @@ async function strategize(r: Req) {
   const target = Math.round(Math.min(r.autoUsd, sale ? median * 0.9 : median));
   const o = r.offers ?? [], pct = r.listPrice && Math.round((1 - o[0]?.price / r.listPrice) * 100);
   const bullets = [
-    ...(o.length > 1 ? [`Cheapest of ${o.length} stores compared live (${o.slice(0, 4).map((x) => x.store).join(", ")}${o.length > 4 ? "…" : ""}): ${usd(o[0].price)} at ${o[0].store}${pct ? `, ${pct}% below list ${usd(r.listPrice!)}` : ""}.`] : []),
+    ...(o.length > 1 ? [`Cheapest of ${r.storesCompared ?? o.length} stores compared live (${o.slice(0, 4).map((x) => x.store).join(", ")}${o.length > 4 ? "…" : ""}): ${usd(o[0].price)} at ${o[0].store}${pct ? `, ${pct}% below list ${usd(r.listPrice!)}` : ""}.`] : []),
     `Now ${usd(cur)} vs modeled 90-day median ${usd(median)} (${inflation >= 0 ? "+" : ""}${(inflation * 100).toFixed(0)}%).`,
     sale
       ? `${sale.name} falls before your buy-by date; past sales cut this price ~14%.`
@@ -761,7 +761,7 @@ function setOffers(r: Req, offers: Offer[]) {
   if (!best) return;
   const list = Math.max(best.listMinor ?? 0, ...top.map((o) => o.priceMinor)) / 100; // the store's "usually" price, else the dearest store
   Object.assign(r, {
-    offer: best, merchant: best.store, imageUrl: best.image ?? r.imageUrl, listPrice: list > best.priceMinor / 100 ? list : undefined,
+    offer: best, merchant: best.store, imageUrl: best.image ?? r.imageUrl, listPrice: list > best.priceMinor / 100 ? list : undefined, storesCompared: offers.length,
     offers: top.map((o): StoreOffer => ({ store: o.store, price: o.priceMinor / 100, url: o.url, image: o.image, rating: o.rating, source: o.source })),
   });
 }
