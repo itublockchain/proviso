@@ -1,0 +1,33 @@
+name: Hero
+options:
+  bundleIdPrefix: com.ethtokyo.hero
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Hero:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Hero
+    info:
+      path: Hero/Info.plist
+      properties:
+        CFBundleDisplayName: Hero
+        UILaunchScreen: {}
+        CFBundleURLTypes:
+          - CFBundleURLName: com.ethtokyo.hero
+            CFBundleURLSchemes: [hero]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ethtokyo.hero
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: false
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
