@@ -149,6 +149,11 @@ const google = (q: string, country: string, fresh: boolean) => cached<Offer[]>(`
 const amazon = (q: string, country: string, fresh: boolean) => cached<Offer[]>(`amazon:${country}:${norm(q)}`, fresh, () =>
   run("apify", "/axesso_data/amazon-search-scraper", { body: { input: [{ keyword: q, domainCode: "com", maxPages: 1, sortBy: "relevanceblender", category: "aps" }] } }).then(fromAmazon));
 
+/** Google Shopping only, never waiting on Amazon: for quick model suggestions in chat (~4 s uncached, instant cached). */
+export async function quickSearch(query: string, { minPriceUsd = 0, maxPriceUsd = Infinity, country = "US" }: Opts = {}): Promise<Offer[]> {
+  return rank(query.trim(), (await within(google(query.trim(), country, false), 8000)) ?? [], minPriceUsd, maxPriceUsd);
+}
+
 /** Live listings for a query from Google Shopping (many stores) and Amazon, merged, filtered and ranked (see `rank`). */
 export async function searchProducts(query: string, { minPriceUsd = 0, maxPriceUsd = Infinity, country = "US", fresh = false }: Opts = {}): Promise<Offer[]> {
   const q = query.trim(), t0 = Date.now(), am = amazon(q, country, fresh);

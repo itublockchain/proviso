@@ -10,10 +10,11 @@ import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { approvalTypedData, loginUrl, oidcEnabled, pollDevice, redeemLogin, startDevice, takeLogin, type Claims, type Device } from "./worldid.js";
 
-import { compareStores, type Offer, type searchProducts } from "./monid.js";
+import { compareStores, type Offer, type quickSearch, type searchProducts } from "./monid.js";
 
 type Deps = {
   searchProducts: typeof searchProducts; // injected so check.ts runs offline
+  quickSearch: typeof quickSearch; // Google Shopping only: model suggestions in chat
   startWorldApproval: (o: any) => Promise<void>;
   advanceWorld: (o: any) => Promise<void>;
 };
@@ -224,24 +225,16 @@ async function parseChat(msg: string): Promise<{ draft: Draft; specific: boolean
 const SPECIFIC = /\d|playstation|ps5|xbox|switch|iphone|ipad|macbook|airpods|galaxy|pixel|bravia|keychron|dyson|kindle|lego/i;
 
 type Suggestion = { title: string; query: string; priceUsd: number; store: string; image?: string; why: string };
-/** A kind of product -> live listings under the max (Monid) -> 3 distinct concrete models with a one-line reason (Claude). */
-export async function suggestModels(d: Draft, deps: Pick<Deps, "searchProducts">): Promise<Suggestion[]> {
-  const found = await deps.searchProducts(d.query, { minPriceUsd: d.maxUsd * 0.3, maxPriceUsd: d.maxUsd });
-  const seen = new Set<string>(), cands = found.filter((o) => {
+/** A kind of product -> the first 3 distinct live listings under the max (Google Shopping via Monid, no Amazon wait, no LLM pass). */
+export async function suggestModels(d: Draft, deps: Pick<Deps, "quickSearch">): Promise<Suggestion[]> {
+  const found = await deps.quickSearch(d.query, { minPriceUsd: d.maxUsd * 0.3, maxPriceUsd: d.maxUsd });
+  const seen = new Set<string>();
+  return found.filter((o) => {
     const k = o.title.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 28);
     return !seen.has(k) && !!seen.add(k);
-  }).slice(0, 12);
-  if (!cands.length) return [];
-  const ai = await claudeJson<{ picks?: { i: number; model: string; why: string }[] }>(
-    `A shopper wants ${JSON.stringify(d.title)}: at most $${d.maxUsd}, bought automatically up to $${d.autoUsd}. Live listings:\n` +
-    cands.map((o, i) => `${i}. ${o.title} | $${(o.priceMinor / 100).toFixed(2)} | ${o.store}`).join("\n") +
-    `\nPick 3 distinct, well-regarded specific models from these listings (different brands or tiers; favour ones at or under $${d.autoUsd}, at most one above it). Reply as JSON {"picks":[{"i": <listing number>, "model": "<clean brand + model name, no store or marketing words>", "why": "<one short reason, max 12 words>"}]}.`
-  );
-  const picks = (Array.isArray(ai?.picks) ? ai!.picks : []).filter((p) => Number.isInteger(p?.i) && cands[p.i]);
-  const chosen = picks.length ? picks : cands.slice(0, 3).map((o, i) => ({ i, model: o.title, why: "" }));
-  return chosen.slice(0, 4).map((p) => {
-    const o = cands[p.i], model = String((typeof p.model === "string" && p.model.trim()) || o.title).slice(0, 80);
-    return { title: model, query: model, priceUsd: o.priceMinor / 100, store: o.store, image: o.image, why: typeof p.why === "string" ? p.why : "" };
+  }).slice(0, 3).map((o) => {
+    const model = o.title.split(/ [-|–] /)[0].trim().slice(0, 80); // drop "- Black | Retailer" tails
+    return { title: model, query: model, priceUsd: o.priceMinor / 100, store: o.store, image: o.image, why: o.rating ? `${o.rating}★ at ${o.store}` : "" };
   });
 }
 
@@ -1324,6 +1317,8 @@ export function mountProviso(app: Express, deps: Deps) {
         reply: `"${draft.title}" could be many things. I checked live stores for models up to ${usd(draft.maxUsd)}. Pick one and I'll watch it with your rules: buy on my own up to ${usd(draft.autoUsd)}, ask you up to ${usd(draft.maxUsd)}.`,
         draft, suggestions,
       });
+      // every request watches one exact product: without models to offer, ask for one instead of drafting a vague request
+      return res.json({ reply: `I couldn't pull live models for "${draft.title}" up to ${usd(draft.maxUsd)} just now. Tell me a brand or model (for example "Sony Bravia 3 55 inch"), or send the same message again in a few seconds.` });
     }
     res.json({
       reply: `Got it: ${draft.title}. I will buy on my own up to ${usd(draft.autoUsd)}, ask you up to ${usd(draft.maxUsd)}, and never above that. Deadline ${new Date(draft.deadline).toDateString()}.`,

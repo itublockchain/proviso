@@ -8,7 +8,7 @@ import { z } from "zod";
 import { keccak256, encodeAbiParameters, parseAbiParameters } from "viem";
 import { widgetHtml } from "./widget.js";
 import { mountProviso, resetTarget } from "./proviso.js";
-import { searchProducts, type Offer } from "./monid.js";
+import { quickSearch, searchProducts, type Offer } from "./monid.js";
 import QRCode from "qrcode";
 import { IDKit, orbLegacy, type IDKitRequest } from "@worldcoin/idkit-core";
 import { signRequest } from "@worldcoin/idkit-core/signing";
@@ -215,7 +215,7 @@ app.post("/mcp", async (req, res) => {
   await transport.handleRequest(req, res, req.body);
 });
 app.get("/mcp", (_req, res) => res.status(405).end());
-mountProviso(app, { searchProducts, startWorldApproval, advanceWorld });
+mountProviso(app, { searchProducts, quickSearch, startWorldApproval, advanceWorld });
 
 app.listen(PORT, () => console.log(`cartlock mcp on :${PORT}/mcp`));
 
