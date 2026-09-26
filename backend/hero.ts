@@ -665,22 +665,27 @@ export function mountHero(app: Express, deps: Deps) {
     }
     if (a.wallet && a.wallet !== addr) return res.status(409).json({ error: "wallet_mismatch", wallet: a.wallet });
     if (!a.wallet) {
-      // free label: not claimed by another account, not registered under herodemo.eth; else a 4-hex suffix
-      let h = a.handle;
-      for (let i = 0; ; i++) {
-        const taken = [...accounts.values()].some((x) => x !== a && x.wallet && x.handle === h)
-          || (await pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [h] })) !== ZERO;
-        if (!taken) break;
-        if (i === 5) return res.status(409).json({ error: "handle_taken" });
-        h = `${a.handle.slice(0, 19)}-${randomBytes(2).toString("hex")}`;
+      try {
+        // free label: not claimed by another account, not registered under herodemo.eth; else a 4-hex suffix
+        let h = a.handle;
+        for (let i = 0; ; i++) {
+          const taken = [...accounts.values()].some((x) => x !== a && x.wallet && x.handle === h)
+            || (await pub.readContract({ address: HERODEMO_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [h] })) !== ZERO;
+          if (!taken) break;
+          if (i === 5) return res.status(409).json({ error: "handle_taken" });
+          h = `${a.handle.slice(0, 19)}-${randomBytes(2).toString("hex")}`;
+        }
+        const b = { ...a, handle: h, root: `${h}.${ROOT}`, wallet: addr };
+        // CREATE2 address depends only on (operator, salt): known before the deploy is sent
+        const { result } = await pub.simulateContract({
+          account: OPERATOR!, address: FACTORY, abi: ENS_ABI, functionName: "deployProxy",
+          args: [RES_IMPL, saltOf(b), resolverInit(addr, b.root, b.limits, OPERATOR!, AGENT!)],
+        });
+        Object.assign(a, { handle: b.handle, root: b.root, wallet: addr, resolver: result }); // bound only once everything checked out
+      } catch (e: any) {
+        console.error("connect", e?.shortMessage ?? e?.message ?? e);
+        return res.status(502).json({ error: "chain_unavailable" });
       }
-      Object.assign(a, { handle: h, root: `${h}.${ROOT}`, wallet: addr });
-      // CREATE2 address depends only on (operator, salt): known before the deploy is sent
-      const { result } = await pub.simulateContract({
-        account: OPERATOR!, address: FACTORY, abi: ENS_ABI, functionName: "deployProxy",
-        args: [RES_IMPL, saltOf(a), resolverInit(addr, a.root, a.limits, OPERATOR!, AGENT!)],
-      });
-      a.resolver = result;
     }
     a.mode = "wallet";
     saveAccounts();
