@@ -17,6 +17,29 @@ contract MockUSDC {
         balanceOf[t] += v;
         return true;
     }
+
+    // EIP-2612, same domain as the live MockUSDC (OZ ERC20Permit "USDC", version "1")
+    bytes32 constant PERMIT_TYPEHASH =
+        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    mapping(address => uint256) public nonces;
+
+    function DOMAIN_SEPARATOR() public view returns (bytes32) {
+        return keccak256(abi.encode(
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256("USDC"), keccak256("1"), block.chainid, address(this)
+        ));
+    }
+
+    function permitDigest(address o, address s, uint256 v, uint256 n, uint256 d) public view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR(), keccak256(abi.encode(PERMIT_TYPEHASH, o, s, v, n, d))));
+    }
+
+    function permit(address o, address s, uint256 v, uint256 d, uint8 pv, bytes32 r, bytes32 ps) external {
+        require(block.timestamp <= d, "expired");
+        address signer = ecrecover(permitDigest(o, s, v, nonces[o]++, d), pv, r, ps);
+        require(signer != address(0) && signer == o, "invalid signature");
+        allowance[o][s] = v;
+    }
 }
 
 /// Mimics PermissionedResolver.resolve(name, data(node,key)) over uint256 data records.
@@ -238,6 +261,97 @@ contract PolicySpenderTest is Test {
         vm.etch(address(0xbEEF), address(ps).code);
         bytes32 d = PolicySpender(address(0xbEEF)).approvalDigest(keccak256("order"), ALICE_WORLD, 1_790_000_000);
         assertEq(d, DIGEST_FROM_VIEM);
+    }
+
+    // --- setupWithPermit: one gasless owner signature, submitted by anyone ---
+
+    uint256 constant CAROL_PK = 0xCA201;
+    bytes32 constant CAROL_WORLD = keccak256("https://sandbox.auth.world.org|carol");
+
+    struct Setup {
+        address owner;
+        bytes32 root;
+        address resolver;
+        address agent;
+        bytes32 continuity;
+        uint256 value;
+    }
+
+    function carolSetup() internal returns (Setup memory c) {
+        c = Setup(vm.addr(CAROL_PK), nh("carol.eth"), address(res), agent, CAROL_WORLD, 1000e6);
+        res.set(dns("hobby", "carol", "eth"), "limit", 1000e6);
+        res.set(dns4("ps5", "hobby", "carol", "eth"), "auto", 400e6);
+        res.set(dns4("ps5", "hobby", "carol", "eth"), "max", 500e6);
+        res.set(dns4("ps5", "hobby", "carol", "eth"), "deadline", block.timestamp + 30 days);
+        usdc.mint(c.owner, 5000e6);
+    }
+
+    /// The owner signs a plain USDC permit whose deadline is setupDeadline(config).
+    function signSetup(Setup memory c) internal view returns (uint8 v, bytes32 r, bytes32 s) {
+        uint256 d = ps.setupDeadline(c.owner, c.root, c.resolver, c.agent, c.continuity);
+        return vm.sign(CAROL_PK, usdc.permitDigest(c.owner, address(ps), c.value, usdc.nonces(c.owner), d));
+    }
+
+    function submit(Setup memory c, uint8 v, bytes32 r, bytes32 s) internal {
+        vm.prank(makeAddr("operator")); // anyone may submit; the owner sends nothing
+        ps.setupWithPermit(c.owner, c.root, c.resolver, c.agent, c.continuity, c.value, v, r, s);
+    }
+
+    function test_setupWithPermitThenBuy() public {
+        Setup memory c = carolSetup();
+        (uint8 v, bytes32 r, bytes32 s) = signSetup(c);
+        submit(c, v, r, s);
+
+        (bytes32 root, address resolver, address a, uint256 human) = ps.accounts(c.owner);
+        assertEq(root, c.root);
+        assertEq(resolver, c.resolver);
+        assertEq(a, agent);
+        assertEq(human, 0);
+        assertEq(ps.continuity(c.owner), CAROL_WORLD);
+        assertEq(usdc.allowance(c.owner, address(ps)), 1000e6);
+        assertTrue(ps.setupDeadline(c.owner, c.root, c.resolver, c.agent, c.continuity) >= 1 << 255); // never expires
+
+        PolicySpender.Order memory o = order(dns4("ps5", "hobby", "carol", "eth"), shop, 399e6);
+        o.payer = c.owner;
+        buy(o, noProof()); // auto band from carol's own wallet
+        assertEq(usdc.balanceOf(shop), 399e6);
+        assertEq(usdc.balanceOf(c.owner), 5000e6 - 399e6);
+
+        o = order(dns4("ps5", "hobby", "carol", "eth"), shop, 450e6);
+        o.payer = c.owner;
+        uint64 t = uint64(block.timestamp);
+        buyApproved(o, t, approve(ATTESTER_PK, o, CAROL_WORLD, t)); // mid band bound to carol's World ID (continuity)
+        assertEq(usdc.balanceOf(shop), 849e6);
+    }
+
+    function test_setupPermitCommitsToConfig() public {
+        Setup memory c = carolSetup();
+        (uint8 v, bytes32 r, bytes32 s) = signSetup(c);
+        Setup[6] memory bad;
+        for (uint256 i; i < 6; i++) bad[i] = Setup(c.owner, c.root, c.resolver, c.agent, c.continuity, c.value);
+        bad[0].root = nh("mallory.eth");
+        bad[1].resolver = makeAddr("evilResolver");
+        bad[2].agent = makeAddr("evilAgent");
+        bad[3].continuity = keccak256("https://sandbox.auth.world.org|mallory");
+        bad[4].value = type(uint256).max;
+        bad[5].owner = alice;
+        for (uint256 i; i < 6; i++) {
+            vm.expectRevert("invalid signature");
+            submit(bad[i], v, r, s);
+        }
+        (, , address a,) = ps.accounts(c.owner);
+        assertEq(a, address(0));
+        submit(c, v, r, s); // the untouched config still goes through
+    }
+
+    function test_setupPermitReplay() public {
+        Setup memory c = carolSetup();
+        (uint8 v, bytes32 r, bytes32 s) = signSetup(c);
+        submit(c, v, r, s);
+        vm.prank(c.owner);
+        ps.setAccount(c.root, c.resolver, address(0), 0); // owner later disables the agent...
+        vm.expectRevert("invalid signature"); // ...and the old signature cannot re-enable it (nonce consumed)
+        submit(c, v, r, s);
     }
 
     // --- helpers ---

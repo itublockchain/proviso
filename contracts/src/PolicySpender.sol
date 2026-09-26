@@ -6,6 +6,10 @@ interface IERC20 {
     function balanceOf(address who) external view returns (uint256);
 }
 
+interface IERC20Permit {
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external;
+}
+
 interface IWorldID {
     function verifyProof(
         uint256 root,
@@ -126,6 +130,42 @@ contract PolicySpender {
     function setContinuity(bytes32 c) external {
         continuity[msg.sender] = c;
         emit ContinuitySet(msg.sender, c);
+    }
+
+    /// EIP-2612 deadline that commits to a whole account config: top bit set (never expires in practice), low 255 bits
+    /// = hash of (chain, this contract, owner, root, resolver, agent, continuity).
+    function setupDeadline(address owner, bytes32 root, address resolver, address agent, bytes32 continuity_)
+        public
+        view
+        returns (uint256)
+    {
+        return (uint256(1) << 255)
+            | (uint256(keccak256(abi.encode(block.chainid, address(this), owner, root, resolver, agent, continuity_))) >> 1);
+    }
+
+    /// Gasless one-signature onboarding: the owner signs only a USDC permit(this, value); anyone (the Hero operator)
+    /// submits it here. The permit's deadline is setupDeadline(config), so the same signature also authorizes exactly
+    /// this account config: change any field and the permit digest no longer recovers the owner. The permit nonce makes
+    /// it single-use. Sets accounts[owner] = (root, resolver, agent, human 0) and continuity[owner] = continuity_.
+    /// Known limitation: the permit is public once submitted, so a front-runner can call usdc.permit() directly and
+    /// consume the nonce. Setup then reverts and the owner signs again; the griefer can neither change the config nor
+    /// move funds (the allowance alone is useless without an account row naming the agent).
+    function setupWithPermit(
+        address owner,
+        bytes32 root,
+        address resolver,
+        address agent,
+        bytes32 continuity_,
+        uint256 value,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        IERC20Permit(address(usdc)).permit(owner, address(this), value, setupDeadline(owner, root, resolver, agent, continuity_), v, r, s);
+        accounts[owner] = Account(root, resolver, agent, 0);
+        emit AccountSet(owner, root, resolver, agent, 0);
+        continuity[owner] = continuity_;
+        emit ContinuitySet(owner, continuity_);
     }
 
     function orderHash(Order calldata o) public pure returns (bytes32) {
