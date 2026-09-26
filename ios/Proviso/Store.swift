@@ -47,7 +47,7 @@ final class Store {
 
     private var mockAPI = MockAPI()
     /// Public tunnel to the demo backend, so the app works on a real phone too.
-    static let defaultBackend = "https://uncookable-izaiah-dualistic.ngrok-free.dev"
+    static let defaultBackend = "https://proviso-api.extypen.me"
     private static let demoSignedInKey = "proviso.demoSignedIn"
 
     private var api: API {
@@ -60,7 +60,8 @@ final class Store {
 
     init() {
         self.demoMode = UserDefaults.standard.object(forKey: "proviso.demoMode") as? Bool ?? false // live by default; demo mode is opt-in in Settings
-        self.backendURLString = UserDefaults.standard.string(forKey: "proviso.backendURL") ?? Self.defaultBackend
+        let saved = UserDefaults.standard.string(forKey: "proviso.backendURL")
+        self.backendURLString = saved.flatMap { $0.contains("ngrok") ? nil : $0 } ?? Self.defaultBackend // the old dev tunnel is gone
         self.onboardingSeen = UserDefaults.standard.bool(forKey: "proviso.onboardingSeen")
     }
 
