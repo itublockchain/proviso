@@ -70,6 +70,7 @@ contract ForkTest is Test {
 
     function test_setupState() public view {
         assertTrue(ps.verifiedMerchant(shop));
+        assertEq(ps.admin(), vm.addr(opPk)); // Deploy.s.sol: admin = operator
         assertFalse(ps.verifiedMerchant(scam));
         assertEq(ps.remaining(hobby, alice), 1000e6);
         (bytes32 root, address r, address a, uint256 human) = ps.accounts(alice);
@@ -204,7 +205,7 @@ contract ForkTest is Test {
 contract ForkWorldTest is Test {
     function test_realProofMatchesContractHashing() public {
         vm.createSelectFork("sepolia", FORK_BLOCK);
-        PolicySpender ps = new PolicySpender(IERC20(USDC), IWorldID(ROUTER), APP_ID, "buy", IResolver(address(0)), "", address(0));
+        PolicySpender ps = new PolicySpender(IERC20(USDC), IWorldID(ROUTER), APP_ID, "buy", IResolver(address(0)), "", address(0), address(0));
         bytes32 signal = 0xabababababababababababababababababababababababababababababababab;
         assertEq(ps.signalOf(signal), 0x007d3a608bb850f47c2d77d6be73b8f93c94a80264b7bb3cc5c7d2fb54d07ef6);
 

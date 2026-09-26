@@ -79,6 +79,7 @@ contract PolicySpenderTest is Test {
     address agent = makeAddr("agent");
     address shop = makeAddr("shop");
     address scam = makeAddr("scam");
+    address admin = makeAddr("admin");
 
     bytes merchants = dns("verified", "merchants", "eth");
     bytes hobby = dns("hobby", "alice", "eth");
@@ -87,7 +88,7 @@ contract PolicySpenderTest is Test {
 
     function setUp() public {
         vm.warp(1_790_000_000);
-        ps = new PolicySpender(IERC20(address(usdc)), IWorldID(address(world)), "app_x", "buy", IResolver(address(res)), merchants, vm.addr(ATTESTER_PK));
+        ps = new PolicySpender(IERC20(address(usdc)), IWorldID(address(world)), "app_x", "buy", IResolver(address(res)), merchants, vm.addr(ATTESTER_PK), admin);
         res.set(merchants, vm.toLowercase(vm.toString(shop)), 1);
 
         res.set(hobby, "limit", 1000e6);
@@ -352,6 +353,72 @@ contract PolicySpenderTest is Test {
         ps.setAccount(c.root, c.resolver, address(0), 0); // owner later disables the agent...
         vm.expectRevert("invalid signature"); // ...and the old signature cannot re-enable it (nonce consumed)
         submit(c, v, r, s);
+    }
+
+    // --- reset: owner or admin switches the account off; only a fresh owner signature switches it back on ---
+
+    function test_resetForClearsAccountAndBudget() public {
+        Setup memory c = carolSetup();
+        (uint8 v, bytes32 r, bytes32 s) = signSetup(c);
+        submit(c, v, r, s);
+        bytes memory carolHobby = dns("hobby", "carol", "eth");
+        PolicySpender.Order memory o = order(dns4("ps5", "hobby", "carol", "eth"), shop, 399e6);
+        o.payer = c.owner;
+        buy(o, noProof());
+        assertEq(ps.spentOf(c.owner, carolHobby), 399e6);
+        assertEq(ps.remaining(carolHobby, c.owner), 1000e6 - 399e6);
+
+        vm.expectRevert(PolicySpender.NotAdmin.selector);
+        ps.resetFor(c.owner); // not the admin
+        vm.expectRevert(PolicySpender.NotAdmin.selector);
+        vm.prank(c.owner);
+        ps.resetFor(c.owner); // not even the owner: owners use resetAccount()
+
+        vm.expectEmit(address(ps));
+        emit PolicySpender.AccountReset(c.owner, 1, admin);
+        vm.prank(admin);
+        ps.resetFor(c.owner);
+        (bytes32 root, address resolver, address a, uint256 human) = ps.accounts(c.owner);
+        assertEq(abi.encode(root, resolver, a, human), abi.encode(bytes32(0), address(0), address(0), uint256(0)));
+        assertEq(ps.continuity(c.owner), 0);
+        assertEq(ps.epoch(c.owner), 1);
+        assertEq(ps.spentOf(c.owner, carolHobby), 0); // new epoch: counters start at 0
+
+        o = order(dns4("ps5", "hobby", "carol", "eth"), shop, 399e6);
+        o.payer = c.owner;
+        expectBuyRevert(o, noProof(), PolicySpender.NotAgent.selector); // switched off, allowance left alone
+        assertEq(usdc.allowance(c.owner, address(ps)), 1000e6 - 399e6);
+        vm.expectRevert("invalid signature"); // the admin cannot switch it back on with the old signature
+        submit(c, v, r, s);
+
+        (v, r, s) = signSetup(c); // the owner signs again (new permit nonce)
+        submit(c, v, r, s);
+        assertEq(ps.remaining(carolHobby, c.owner), 1000e6); // full budget again in the same period
+        buy(o, noProof());
+        assertEq(ps.spentOf(c.owner, carolHobby), 399e6);
+        assertEq(usdc.balanceOf(shop), 798e6);
+    }
+
+    function test_resetAccountByOwner() public {
+        buy(order(lego, shop, 700e6), noProof());
+        vm.expectEmit(address(ps));
+        emit PolicySpender.AccountReset(alice, 1, alice);
+        vm.prank(alice);
+        ps.resetAccount();
+        (, , address a,) = ps.accounts(alice);
+        assertEq(a, address(0));
+        assertEq(ps.continuity(alice), 0);
+        assertEq(ps.spentOf(alice, hobby), 0);
+        expectBuyRevert(order(ps5, shop, 100e6), noProof(), PolicySpender.NotAgent.selector);
+
+        vm.startPrank(alice); // owner re-authorizes directly
+        ps.setAccount(nh("alice.eth"), address(res), agent, ALICE_HUMAN);
+        ps.resetAccount(); // twice: epoch keeps counting
+        ps.setAccount(nh("alice.eth"), address(res), agent, ALICE_HUMAN);
+        vm.stopPrank();
+        assertEq(ps.epoch(alice), 2);
+        buy(order(lego, shop, 700e6), noProof()); // would be OverBudget without the reset (700 + 700 > 1000)
+        assertEq(ps.remaining(hobby, alice), 300e6);
     }
 
     // --- helpers ---

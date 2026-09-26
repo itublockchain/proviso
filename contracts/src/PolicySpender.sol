@@ -75,17 +75,22 @@ contract PolicySpender {
     IResolver public immutable merchantResolver;
     bytes public merchantRegistry; // DNS-encoded name whose `data` records mark verified merchants
     address public immutable attester; // backend key that signs HumanApproval after validating the owner's World ID
+    address public immutable admin; // Hero operator: may only switch accounts off (resetFor)
 
     /// owner => keccak256(iss "|" sub) of the owner's linked World ID for Agents subject; 0 = buyApproved mid band off
     mapping(address => bytes32) public continuity;
 
     mapping(address => Account) public accounts;
+    /// owner => reset count; folded into the spend key, so a reset starts every category counter from 0
+    mapping(address => uint256) public epoch;
     // Keyed by payer too: setAccount doesn't prove root ownership, so a shared key would let anyone burn alice's budget.
-    mapping(address => mapping(bytes32 => mapping(uint256 => uint256))) public spent; // payer => category node => period => amount
+    /// payer => spendKey(epoch[payer], category node) => period => amount (read it with spentOf)
+    mapping(address => mapping(bytes32 => mapping(uint256 => uint256))) public spent;
     mapping(bytes32 => bool) public used; // order hash => spent
 
     event AccountSet(address indexed owner, bytes32 root, address resolver, address agent, uint256 human);
     event ContinuitySet(address indexed owner, bytes32 continuity);
+    event AccountReset(address indexed owner, uint256 epoch, address by);
     event Bought(
         address indexed payer, bytes32 indexed orderHash, bytes32 indexed category, address payTo, uint256 price, bool human
     );
@@ -100,6 +105,7 @@ contract PolicySpender {
     error NotOwnerHuman();
     error StaleApproval();
     error BadApproval();
+    error NotAdmin();
 
     constructor(
         IERC20 _usdc,
@@ -108,7 +114,8 @@ contract PolicySpender {
         string memory action,
         IResolver _merchantResolver,
         bytes memory _merchantRegistry,
-        address _attester
+        address _attester,
+        address _admin
     ) {
         usdc = _usdc;
         worldId = _worldId;
@@ -116,6 +123,7 @@ contract PolicySpender {
         merchantResolver = _merchantResolver;
         merchantRegistry = _merchantRegistry;
         attester = _attester;
+        admin = _admin;
     }
 
     /// One-time setup by the owner, next to a USDC approve(this, cap).
@@ -166,6 +174,27 @@ contract PolicySpender {
         emit AccountSet(owner, root, resolver, agent, 0);
         continuity[owner] = continuity_;
         emit ContinuitySet(owner, continuity_);
+    }
+
+    /// Testnet / offboarding tool: wipes the caller's account row and World ID link and starts a new spend epoch
+    /// (every category counter back to 0). Nothing can be spent afterwards until the owner re-authorizes with a fresh
+    /// setupWithPermit signature (or setAccount). The USDC allowance is left as is; it is useless without an account row.
+    function resetAccount() external {
+        reset(msg.sender);
+    }
+
+    /// Same as resetAccount(), done by `admin` for `owner` (e.g. "start over" for a user who signed in with World ID).
+    /// It can only switch an account off: the admin can never set an account, raise a budget or spend. The fresh epoch
+    /// only takes effect once the OWNER signs a new setup, which is also what re-opens a full period budget.
+    function resetFor(address owner) external {
+        if (msg.sender != admin) revert NotAdmin();
+        reset(owner);
+    }
+
+    function reset(address owner) internal {
+        delete accounts[owner];
+        delete continuity[owner];
+        emit AccountReset(owner, ++epoch[owner], msg.sender);
     }
 
     function orderHash(Order calldata o) public pure returns (bytes32) {
@@ -236,10 +265,11 @@ contract PolicySpender {
         // Budget is recomputed at buy time: fills and salary changes need no policy rewrite.
         uint256 catOff = 1 + uint8(o.request[0]);
         bytes32 catNode = namehash(o.request, catOff);
+        bytes32 key = spendKey(o.payer, catNode);
         uint256 period = block.timestamp / PERIOD; // new period = fresh counter, no reset tx
-        uint256 total = spent[o.payer][catNode][period] + o.price;
+        uint256 total = spent[o.payer][key][period] + o.price;
         if (total > limit(a.resolver, o.request[catOff:], o.payer)) revert OverBudget();
-        spent[o.payer][catNode][period] = total;
+        spent[o.payer][key][period] = total;
 
         require(usdc.transferFrom(o.payer, o.payTo, o.price), "transfer");
         emit Bought(o.payer, hash, catNode, o.payTo, o.price, human);
@@ -252,8 +282,17 @@ contract PolicySpender {
 
     function remaining(bytes calldata categoryName, address owner) external view returns (uint256) {
         uint256 l = limit(accounts[owner].resolver, categoryName, owner);
-        uint256 s = spent[owner][namehash(categoryName, 0)][block.timestamp / PERIOD];
+        uint256 s = spentOf(owner, categoryName);
         return s >= l ? 0 : l - s;
+    }
+
+    /// What `owner` spent in this category (DNS-encoded name, e.g. hobby.alice.eth) this period, since the last reset.
+    function spentOf(address owner, bytes calldata categoryName) public view returns (uint256) {
+        return spent[owner][spendKey(owner, namehash(categoryName, 0))][block.timestamp / PERIOD];
+    }
+
+    function spendKey(address owner, bytes32 categoryNode) internal view returns (bytes32) {
+        return keccak256(abi.encode(epoch[owner], categoryNode));
     }
 
     /// Category limit for this period, optionally capped at pct% of the owner's current balance.
