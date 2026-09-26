@@ -1,13 +1,13 @@
 // Hero API for the iOS app: requests -> time-aware strategy -> ENS policy bands -> auto-buy or World-approved buy.
-import type { Express } from "express";
-import { randomUUID } from "node:crypto";
+import type { Express, Request } from "express";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
   createPublicClient, createWalletClient, encodeAbiParameters, encodeFunctionData, http, keccak256, parseAbi, stringToBytes, toHex, type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
-import { approvalTypedData, oidcEnabled, pollDevice, startDevice, type Device } from "./worldid.js";
+import { approvalTypedData, loginUrl, oidcEnabled, pollDevice, redeemLogin, startDevice, takeLogin, type Claims, type Device } from "./worldid.js";
 
 type Offer = { sku: string; title: string; merchant: string; priceMinor: number; image?: string };
 type Deps = {
@@ -48,10 +48,37 @@ type Approval = {
   closed?: boolean; // denial/expiry already applied to the request
 };
 
+// Local state files (gitignored); HERO_STATE_DIR lets check.ts use a temp dir.
+const stateFile = (name: string) => (process.env.HERO_STATE_DIR ? `${process.env.HERO_STATE_DIR}/${name}` : new URL(`./${name}`, import.meta.url));
+const load = (f: string | URL) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return undefined; } };
+
 // The owner's linked World ID for Agents subject: "the human who authorized this agent". Kept on disk so a restart keeps it.
 type Owner = { iss: string; sub: string; continuity: Hex; linkedAt: number };
-const OWNER_FILE = new URL("./.world-owner.json", import.meta.url);
-let owner: Owner | undefined = (() => { try { return JSON.parse(readFileSync(OWNER_FILE, "utf8")); } catch { return undefined; } })();
+const OWNER_FILE = stateFile(".world-owner.json");
+let owner: Owner | undefined = load(OWNER_FILE);
+
+// Sign in with World ID sessions: opaque bearer tokens, only their sha256 is stored. Single owner: a session is valid only for the owner.
+type Session = { iss: string; sub: string; createdAt: number; authTime: number; acr?: string };
+const SESSIONS_FILE = stateFile(".sessions.json");
+const SESSION_TTL = 7 * 86_400_000;
+const sessions = new Map<string, Session>(Object.entries(load(SESSIONS_FILE) ?? {}));
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+const saveSessions = () => writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions)), { mode: 0o600 });
+const bearer = (req: Request) => /^Bearer\s+(\S+)$/i.exec(req.get("authorization") ?? "")?.[1];
+
+function newSession(c: Claims): string {
+  for (const [k, v] of sessions) if (Date.now() - v.createdAt > SESSION_TTL) sessions.delete(k);
+  const token = randomBytes(32).toString("base64url");
+  sessions.set(sha256(token), { iss: c.iss, sub: c.sub, createdAt: Date.now(), authTime: c.auth_time, acr: c.acr });
+  saveSessions();
+  return token;
+}
+
+function sessionOf(req: Request): Session | undefined {
+  const t = bearer(req);
+  const s = t ? sessions.get(sha256(t)) : undefined;
+  if (s && Date.now() - s.createdAt <= SESSION_TTL && owner && s.iss === owner.iss && s.sub === owner.sub) return s;
+}
 const links = new Map<string, { device: Device; status: "pending" | "linked" | "denied" | "expired"; error?: string; txHash?: Hex }>();
 
 const requests = new Map<string, Req>();
@@ -395,9 +422,64 @@ function pickOffer(d: Draft, offers: Offer[]): Offer | undefined {
     .sort((a, b) => score(b) - score(a))[0];
 }
 
+/** Records (iss, sub) as the owner; the owner (= payer) mirrors the continuity onchain, buyApproved() fails closed until it lands. */
+function linkOwner(iss: string, sub: string): Promise<Hex | void> {
+  owner = { iss, sub, continuity: keccak256(stringToBytes(`${iss}|${sub}`)), linkedAt: Date.now() };
+  writeFileSync(OWNER_FILE, JSON.stringify(owner));
+  if (!ENS.ownerKey || !CHAIN.spender) return Promise.resolve();
+  return send(ENS.ownerKey, CHAIN.spender, SPENDER_ABI, "setContinuity", [owner.continuity]).catch((e) => void console.error("setContinuity", e?.shortMessage ?? e));
+}
+
 // ---------- routes ----------
 
 export function mountHero(app: Express, deps: Deps) {
+  // Sign in with World ID (authorization code + PKCE). The first World ID to sign in becomes the owner (single-owner demo).
+  const redirectUri = () => `${(process.env.PUBLIC_URL ?? "").replace(/\/$/, "")}/auth/world/callback`; // exact registered callback
+  app.get("/auth/world/start", async (_req, res) => {
+    if (!oidcEnabled() || !process.env.PUBLIC_URL) return res.status(503).json({ error: "World ID sign-in is not configured" });
+    try {
+      res.redirect(302, await loginUrl(redirectUri()));
+    } catch (e: any) {
+      res.status(502).json({ error: `World ID unavailable: ${e.message}` });
+    }
+  });
+  app.get("/auth/world/callback", async (req, res) => {
+    const back = (q: Record<string, string>) => res.redirect(302, `hero://auth?${new URLSearchParams(q)}`);
+    const q = req.query as Record<string, string | undefined>;
+    const a = takeLogin(String(q.state ?? "")); // consumed before anything else: state is single-use
+    if (q.error) return back({ error: String(q.error).replace(/[^a-z0-9_]/g, "").slice(0, 64) || "access_denied" });
+    if (!a || typeof q.code !== "string") return back({ error: "invalid_state" });
+    let c: Claims;
+    try {
+      c = await redeemLogin(a, q.code, redirectUri());
+    } catch (e: any) {
+      console.error("world sign-in:", e.message); // validation reason only, never the code or tokens
+      return back({ error: /^[a-z_]+$/.test(e.message) ? e.message : "invalid_id_token" });
+    }
+    if (!owner) void linkOwner(c.iss, c.sub); // sets owner now; the setContinuity tx lands in the background
+    else if (c.iss !== owner.iss || c.sub !== owner.sub) return back({ error: "not_owner" });
+    back({ session: newSession(c) });
+  });
+
+  // Every /api route needs a session unless HERO_REQUIRE_LOGIN=0 (read per request).
+  app.use("/api", (req, res, next) => {
+    res.locals.session = sessionOf(req);
+    if (!res.locals.session && process.env.HERO_REQUIRE_LOGIN !== "0") return res.status(401).json({ error: "sign_in_required" });
+    next();
+  });
+  app.get("/api/me", (_req, res) => {
+    const s: Session | undefined = res.locals.session;
+    res.json({
+      signedIn: !!s, sub: s ? sha256(s.sub).slice(0, 12) : undefined, authTime: s ? iso(s.authTime * 1000) : undefined, acr: s?.acr,
+      worldLinked: !!owner, wallet: CHAIN.payer ?? "", ensRoot: ROOT,
+    });
+  });
+  app.post("/api/logout", (req, res) => {
+    const t = bearer(req);
+    if (t && sessions.delete(sha256(t))) saveSessions();
+    res.json({ ok: true });
+  });
+
   app.post("/api/chat", async (req, res) => {
     const draft = await parseDraft(String(req.body?.message ?? ""));
     res.json({
@@ -471,15 +553,8 @@ export function mountHero(app: Express, deps: Deps) {
     const r = l.status === "pending" ? await pollDevice(l.device) : undefined;
     if (l.status === "pending" && r && r.status !== "pending") { // re-checked after await: apply the result once
       if (r.status === "ok") {
-        owner = { iss: r.iss, sub: r.sub, continuity: keccak256(stringToBytes(`${r.iss}|${r.sub}`)), linkedAt: Date.now() };
-        writeFileSync(OWNER_FILE, JSON.stringify(owner));
         l.status = "linked";
-        if (ENS.ownerKey && CHAIN.spender) {
-          // owner (= payer) records the continuity onchain; buyApproved() fails closed until this lands
-          send(ENS.ownerKey, CHAIN.spender, SPENDER_ABI, "setContinuity", [owner.continuity])
-            .then((h) => (l.txHash = h))
-            .catch((e) => console.error("setContinuity", e?.shortMessage ?? e));
-        }
+        linkOwner(r.iss, r.sub).then((h) => { if (h) l.txHash = h; });
       } else if (r.status === "expired") l.status = "expired";
       else { l.status = "denied"; l.error = r.status === "denied" ? "You declined in World ID" : r.error; }
     }
