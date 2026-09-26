@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(Store.self) private var store
+    @State private var showWalletSetup = false
 
     var body: some View {
         NavigationStack {
@@ -19,6 +20,10 @@ struct SettingsView: View {
             }
             .background(Theme.background)
             .navigationTitle("Settings")
+            .fullScreenCover(isPresented: $showWalletSetup) { WalletSetupView() }
+            .onChange(of: store.walletStatus) { _, new in
+                if new == .ready { showWalletSetup = false }
+            }
         }
     }
 
@@ -85,12 +90,19 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "Wallet").padding(.bottom, Theme.spacingS)
             HairlineDivider()
-            settingsRow("ENS root", wallet.ensRoot)
+            settingsRow("Kind", store.walletStatus == .demo ? "Demo wallet (held by Hero)" : "Your wallet")
             HairlineDivider()
-            settingsRow("Address", wallet.address, monospaced: true)
+            settingsRow("ENS name", wallet.ensRoot)
             HairlineDivider()
-            settingsRow("Agent address", wallet.agent, monospaced: true)
+            settingsRow("Address", wallet.address.shortAddress, monospaced: true)
             HairlineDivider()
+            settingsRow("Agent address", wallet.agent.shortAddress, monospaced: true)
+            HairlineDivider()
+            if store.walletStatus == .demo {
+                Button("Set up my own wallet") { showWalletSetup = true }
+                    .padding(.vertical, 9)
+                HairlineDivider()
+            }
         }
     }
 

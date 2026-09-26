@@ -127,6 +127,8 @@ private struct EditCategorySheet: View {
     @State private var limitUsd: Double
     @State private var usePercent: Bool
     @State private var pct: Double
+    @State private var saving = false
+    @State private var errorText: String?
 
     init(category: Category) {
         self.category = category
@@ -167,14 +169,29 @@ private struct EditCategorySheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Task {
-                            try? await store.updateBudget(name: category.name, limitUsd: limitUsd, pct: usePercent ? pct / 100 : nil)
-                            dismiss()
-                        }
-                    }
+                    Button("Save") { Task { await save() } }
+                        .disabled(saving)
                 }
             }
+            .alert("Can't update", isPresented: Binding(
+                get: { errorText != nil },
+                set: { if !$0 { errorText = nil } }
+            )) {
+                Button("OK") { errorText = nil }
+            } message: {
+                Text(errorText ?? "")
+            }
+        }
+    }
+
+    private func save() async {
+        saving = true
+        defer { saving = false }
+        do {
+            try await store.updateBudget(name: category.name, limitUsd: limitUsd, pct: usePercent ? pct / 100 : nil)
+            dismiss()
+        } catch {
+            errorText = error.localizedDescription
         }
     }
 }
