@@ -1,6 +1,7 @@
 {
   "chainId": 11155111,
-  "PolicySpender": "0x3dC4501cE0d266925F8de06ee3a8c0515125f197",
+  "PolicySpender": "0x4821452b64d70258c11acc2722c29fE934f0aB45",
+  "PolicySpender v1 (superseded)": "0x3dC4501cE0d266925F8de06ee3a8c0515125f197",
   "USDC (MockUSDC, open mint)": "0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e",
   "WorldIDRouter": "0x469449f251692e0779667583026b5a1e99512157",
   "attester": "0xCD0d0eF44e493EAD7De8C043047C9D324a1776f5",

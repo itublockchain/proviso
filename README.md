@@ -63,7 +63,8 @@ Hero moves the guarantees on-chain:
 
 | | Address |
 |---|---|
-| PolicySpender | [`0x3dC4501cE0d266925F8de06ee3a8c0515125f197`](https://sepolia.etherscan.io/address/0x3dC4501cE0d266925F8de06ee3a8c0515125f197) |
+| PolicySpender | [`0x4821452b64d70258c11acc2722c29fE934f0aB45`](https://sepolia.etherscan.io/address/0x4821452b64d70258c11acc2722c29fE934f0aB45) (adds `setupWithPermit`: one gasless owner signature) |
+| PolicySpender v1 (superseded) | [`0x3dC4501cE0d266925F8de06ee3a8c0515125f197`](https://sepolia.etherscan.io/address/0x3dC4501cE0d266925F8de06ee3a8c0515125f197) |
 | Owner (demo) | `0x73B30b7150D6cFf3EC35EF25a65E4b8625Cf4435` — `herodemo.eth` |
 | Agent key | `0x79bbB630E4Ba04651cF8642697085E7b1f0AD823` |
 | Verified merchant | `0xB4c42772dAeE7E4251bE9dc4782387C9881e6371` in `hero-verified.eth` |
@@ -71,8 +72,9 @@ Hero moves the guarantees on-chain:
 | Payment token | MockUSDC `0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e` (6 decimals, open mint) |
 
 Example transactions:
-- Policy written for `mechanical-keyboard-d53e.needs.herodemo.eth`: [`0x8810ba18…`](https://sepolia.etherscan.io/tx/0x8810ba18a576d9b49a6ee4fec6b03187abeb907c2b326a2670071f0fb336bd4e)
-- Auto-band purchase of a real Keychron listing for $49.99, paid from the owner's wallet: [`0x568f99ec…`](https://sepolia.etherscan.io/tx/0x568f99ec3e0d11682138b864e5aca9e5d184090b197ab22d6ac5f3af6d04993d)
+- Current contract deployed: [`0x8bd9df89…`](https://sepolia.etherscan.io/tx/0x8bd9df898af83dfb87a25ca691146d53e9163aa85195cd86c9885d1460d98afa); demo owner re-pointed to it: approve [`0xd5b1d29e…`](https://sepolia.etherscan.io/tx/0xd5b1d29eccd59f063feedcf26d2fadbdc5390d19e9c6ff0d9990358ba1ff3da9), setAccount [`0x93c94f9f…`](https://sepolia.etherscan.io/tx/0x93c94f9f82cffae96dad37b22c381efe31c6c53f48b5c20fb4ef74b76df899cc)
+- v1: Policy written for `mechanical-keyboard-d53e.needs.herodemo.eth`: [`0x8810ba18…`](https://sepolia.etherscan.io/tx/0x8810ba18a576d9b49a6ee4fec6b03187abeb907c2b326a2670071f0fb336bd4e)
+- v1: Auto-band purchase of a real Keychron listing for $49.99, paid from the owner's wallet: [`0x568f99ec…`](https://sepolia.etherscan.io/tx/0x568f99ec3e0d11682138b864e5aca9e5d184090b197ab22d6ac5f3af6d04993d)
 
 All addresses: [`contracts/deployments/sepolia.json`](contracts/deployments/sepolia.json).
 
