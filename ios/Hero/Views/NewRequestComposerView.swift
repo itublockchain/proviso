@@ -49,7 +49,7 @@ struct NewRequestComposerView: View {
                 }
 
             }
-            .safeAreaInset(edge: .bottom) { inputBar }
+            .safeAreaInset(edge: .bottom) { if draft == nil { inputBar } } // the draft form owns the bottom edge once shown
             .background(Theme.background)
             .navigationTitle("New Request")
             .navigationBarTitleDisplayMode(.inline)

@@ -240,9 +240,10 @@ async function strategize(r: Req) {
     : inflation > 0.05 ? `Price is ${(inflation * 100).toFixed(0)}% inflated. Waiting for ~${usd(target)}${sale ? ` around ${sale.name}` : ""}.`
     : "Price is fair. I will buy the first dip into your auto band, or ask you if it only reaches the approval band.";
   const ai = await claudeJson<{ summary: string }>(
-    `You are a shopping agent. In one short sentence, state the buying strategy for "${r.title}" given: ${bullets.join(" ")} Target ${usd(target)}. JSON {summary}.`
+    `You are a shopping agent. In one short plain-English sentence, state the buying strategy for "${r.title}" given: ${bullets.join(" ")} Target ${usd(target)}. Reply as JSON {"summary": "<one sentence>"} where summary is a plain string.`
   );
-  if (ai?.summary) summary = ai.summary;
+  // The model sometimes nests an object; the app needs a sentence, so keep the rule-based text then.
+  if (typeof ai?.summary === "string" && ai.summary.trim()) summary = ai.summary.trim();
   r.targetPrice = target;
   r.strategy = { summary, bullets, buyBy: iso(buyBy), confidence: sale || inflation > 0.05 ? 0.8 : 0.6 };
 }
