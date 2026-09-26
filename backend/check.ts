@@ -140,7 +140,7 @@ process.env.HERO_STATE_DIR = mkdtempSync(join(tmpdir(), "hero-check-"));
 writeFileSync(join(process.env.HERO_STATE_DIR, ".world-owner.json"), JSON.stringify({ iss: ISS, sub: "legacy-sub" })); // pre-accounts single owner
 process.env.PUBLIC_URL = "https://hero.test/";
 delete process.env.HERO_REQUIRE_LOGIN;
-const { mountHero } = await import("./hero.js");
+const { mountHero, demoPrice } = await import("./hero.js");
 const { default: express } = await import("express");
 const app = express();
 app.use(express.json());
@@ -209,6 +209,49 @@ assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: an
 assert.deepEqual(await (await get("/api/requests", mallory)).json(), []);
 assert.equal((await get(`/api/requests/${req1.id}`, mallory)).status, 404);
 assert.equal((await post(`/api/requests/${req1.id}/price`, mallory, { price: 1 })).status, 404);
+
+// hidden demo lever: band math lands every scenario in its own band
+for (const [cur, auto, max] of [[439, 400, 500], [210, 100, 200], [80, 100, 200], [12, 10, 11], [5, 1, 3], [400.5, 400, 401]]) {
+  const a = demoPrice("auto", cur, auto, max)!, ap = demoPrice("approval", cur, auto, max)!, b = demoPrice("blocked", cur, auto, max)!;
+  assert.ok(a > 0 && a <= auto && a >= auto / 2 && a <= cur, `auto ${a} for ${cur}/${auto}/${max}`);
+  assert.ok(ap > auto && ap <= max, `approval ${ap} for ${auto}/${max}`);
+  assert.ok(b > max && b <= max * 1.1 + 1, `blocked ${b} for ${max}`);
+  assert.equal(demoPrice("attack", cur, auto, max), a);
+}
+assert.equal(demoPrice("auto", 439, 400, 500), 379.99);
+assert.equal(demoPrice("approval", 439, 400, 500), 449.99);
+assert.equal(demoPrice("blocked", 439, 400, 500), 539.99);
+assert.equal(demoPrice("approval", 100, 100, 100), undefined); // no approval band
+// ... and over HTTP (no chain here): auto buys, attack + blocked keep watching, approval asks World ID, reset reruns
+const demo = async (scenario: string, token = session) => {
+  const r = await post(`/api/requests/${req1.id}/demo`, token, { scenario });
+  return { status: r.status, body: await r.json().catch(() => undefined) };
+};
+const last = (x: any) => x.activity.at(-1);
+assert.equal((await demo("auto", mallory)).status, 404);
+assert.equal((await demo("nope")).status, 400);
+let dr = await demo("blocked");
+assert.deepEqual([dr.body.status, dr.body.currentPrice, last(dr.body).blocked], ["watching", 215.99, true]);
+assert.equal(dr.body.priceHistory.at(-1).price, 215.99);
+assert.match(dr.body.strategy.bullets.at(-1), /Above your \$200 max/);
+dr = await demo("attack");
+assert.equal(dr.body.status, "watching");
+assert.equal(last(dr.body).text, "Prompt-injected checkout tried to pay 0x…bad1 — blocked by the contract (UnverifiedMerchant) (demo, no chain)");
+assert.equal(last(dr.body).blocked, true);
+dr = await demo("auto");
+assert.equal(dr.body.status, "bought");
+assert.ok(dr.body.currentPrice <= 100);
+assert.deepEqual(await demo("approval"), { status: 409, body: { error: "not_watching" } });
+dr = await demo("reset");
+assert.deepEqual([dr.body.status, dr.body.currentPrice], ["watching", 210]); // back to the pre-demo price
+dr = await demo("approval");
+assert.deepEqual([dr.body.status, dr.body.currentPrice], ["needsApproval", 149.99]);
+assert.match(last(dr.body).text, /code ABCD-EFGH/);
+tokenReplies = [[400, { error: "authorization_pending" }]];
+assert.equal((await (await get("/api/approvals", session)).json()).filter((a: any) => a.requestId === req1.id && a.status === "pending").length, 1);
+dr = await demo("reset");
+assert.equal(dr.body.status, "watching");
+assert.equal((await (await get("/api/approvals", session)).json()).filter((a: any) => a.status === "pending").length, 0);
 
 // wallet onboarding: budgets stay editable until the user's resolver exists; handle rules; token-gated page API
 assert.equal((await post("/api/budgets/Hobby", mallory, { limitUsd: 1500 }, "PUT")).status, 200);

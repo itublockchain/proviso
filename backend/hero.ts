@@ -43,7 +43,8 @@ type Req = Draft & {
   currentPrice: number; targetPrice?: number; merchant?: string; offerSku?: string; boughtAt?: number; boughtPrice?: number;
   strategy?: { summary: string; bullets: string[]; buyBy: string; confidence: number };
   priceHistory: { date: string; price: number }[]; events: { date: string; name: string }[];
-  activity: { date: string; text: string; txHash?: string }[];
+  activity: { date: string; text: string; txHash?: string; blocked?: boolean }[]; // blocked: a policy/contract rejection
+  demoFrom?: number; // price before the first demo lever pull, restored by "reset"
 };
 type Approval = {
   id: string; requestId: string; cartHash: Hex; order: any; price: number; status: "pending" | "approved" | "denied" | "expired" | "paid";
@@ -279,11 +280,11 @@ function ctxOf(a?: Account): Ctx {
 }
 const limitOf = (c: Ctx, category: string) => (c.demo ? categories.get(category)?.limitUsd : accounts.get(c.acct!)?.limits[category]) ?? 0;
 
-function makeOrder(r: Req, price: number) {
+function makeOrder(r: Req, price: number, payTo: Hex = CHAIN.merchant) {
   return {
     payer: r.ctx.payer ?? ZERO,
     request: dnsEncode(r.ensName),
-    payTo: CHAIN.merchant,
+    payTo,
     price: BigInt(Math.round(price * 1e6)),
     sku: keccak256(stringToBytes(r.offerSku ?? r.query)),
     expiry: BigInt(Math.floor(Date.now() / 1000) + 600),
@@ -294,7 +295,10 @@ const orderHash = (o: ReturnType<typeof makeOrder>) => keccak256(encodeAbiParame
 
 /** Sends buy() when the chain is configured; otherwise returns undefined (demo mode). */
 async function sendBuy(order: ReturnType<typeof makeOrder>, proof?: any): Promise<Hex | undefined> {
-  if (!CHAIN.spender || !CHAIN.agentKey || order.payer === ZERO) return;
+  if (!CHAIN.spender || !CHAIN.agentKey || order.payer === ZERO) {
+    if (order.payTo !== CHAIN.merchant) throw new Error("UnverifiedMerchant"); // no chain: mirror the contract's merchant check
+    return;
+  }
   const human = proof
     ? { root: BigInt(proof.merkle_root), nullifier: BigInt(proof.nullifier), proof: Array.from({ length: 8 }, (_, i) => BigInt("0x" + proof.proof.slice(2 + i * 64, 66 + i * 64))) }
     : { root: 0n, nullifier: 0n, proof: Array(8).fill(0n) };
@@ -482,20 +486,26 @@ function markBought(r: Req, price: number, txHash?: string, human = false) {
   r.activity.push({ date: iso(Date.now()), text: `Bought for ${usd(price)}${human ? " with your World ID approval" : " (auto band)"}${txHash ? "" : " (demo, no chain)"}`, txHash });
 }
 
-/** Called when the watched price changes: apply the ENS policy bands exactly like the contract does. */
-async function onPrice(r: Req, price: number, deps: Deps) {
+/** Called when the watched price changes: apply the ENS policy bands exactly like the contract does.
+ *  `payTo` overrides the verified merchant (the demo's prompt-injection attack). */
+async function onPrice(r: Req, price: number, deps: Deps, payTo?: Hex) {
   if (r.status !== "watching") return; // bought, expired, or already waiting on the human
   r.currentPrice = price;
   r.priceHistory.push({ date: iso(Date.now()), price });
   const left = await leftThisPeriod(r.ctx, r.category);
-  if (price > r.maxUsd) return void r.activity.push({ date: iso(Date.now()), text: `Price ${usd(price)} is above max ${usd(r.maxUsd)}: waiting` });
+  if (price > r.maxUsd) return void r.activity.push({ date: iso(Date.now()), text: `Above your ${usd(r.maxUsd)} max at ${usd(price)} — not bought`, blocked: true });
   if (price > left) return void r.activity.push({ date: iso(Date.now()), text: `${r.category} budget has ${usd(left)} left this period: waiting` });
-  const order = makeOrder(r, price);
+  const order = makeOrder(r, price, payTo);
   if (price <= r.autoUsd) {
     try {
       markBought(r, price, await sendBuy(order));
     } catch (e: any) {
-      return void r.activity.push({ date: iso(Date.now()), text: `Contract rejected the purchase: ${reason(e)}` });
+      const txHash = /0x[0-9a-fA-F]{64}/.exec(String(e?.message))?.[0]; // set only when a sent tx reverted on chain
+      const onChain = !!(CHAIN.spender && CHAIN.agentKey && order.payer !== ZERO); // same test as sendBuy
+      const text = payTo
+        ? `Prompt-injected checkout tried to pay 0x…${payTo.slice(-4)} — blocked by the contract (${reason(e)})${txHash ? "" : onChain ? ", rejected before sending" : " (demo, no chain)"}`
+        : `Contract rejected the purchase: ${reason(e)}`;
+      return void r.activity.push({ date: iso(Date.now()), text, txHash, blocked: true });
     }
     return agentStatus(r, "bought");
   }
@@ -544,7 +554,7 @@ async function advanceAgentWorld(a: Approval) {
 }
 
 /** Contract custom error name (e.g. OverBudget) when viem decoded it, else the short message. */
-const reason = (e: any): string => e?.cause?.data?.errorName ?? e?.walk?.((x: any) => x?.data?.errorName)?.data?.errorName ?? String(e?.shortMessage ?? e);
+const reason = (e: any): string => e?.cause?.data?.errorName ?? e?.walk?.((x: any) => x?.data?.errorName)?.data?.errorName ?? String(e?.shortMessage ?? e?.message ?? e);
 
 async function refreshApproval(a: Approval, deps: Deps) {
   if (a.status === "pending" && Date.now() > a.expiresAt) a.status = "expired";
@@ -571,7 +581,7 @@ async function refreshApproval(a: Approval, deps: Deps) {
   } catch (e: any) {
     a.status = "denied"; a.denyReason = reason(e); a.closed = true;
     r.status = "watching";
-    r.activity.push({ date: iso(Date.now()), text: `Contract rejected the purchase: ${a.denyReason}` });
+    r.activity.push({ date: iso(Date.now()), text: `Contract rejected the purchase: ${a.denyReason}`, blocked: true });
   }
 }
 
@@ -586,7 +596,7 @@ function approvalView(a: Approval) {
 
 function requestView(r: Req) {
   if (r.status === "watching" && Date.now() > Date.parse(r.deadline)) r.status = "expired";
-  const { offerSku, boughtAt, boughtPrice, acct, ctx, ...v } = r;
+  const { offerSku, boughtAt, boughtPrice, acct, ctx, demoFrom, ...v } = r;
   return { ...v, boughtAt: boughtAt ? iso(boughtAt) : undefined };
 }
 
@@ -598,6 +608,21 @@ function pickOffer(d: Draft, offers: Offer[]): Offer | undefined {
     .filter((o) => o.priceMinor / 100 >= 0.5 * d.autoUsd && score(o) >= 0.5)
     .sort((a, b) => score(b) - score(a))[0];
 }
+
+/** Stage demo lever: a price inside the request's own bands, so each scenario lands where it should (undefined = no such band). */
+export type Scenario = "auto" | "approval" | "blocked" | "attack";
+export function demoPrice(s: Scenario, current: number, autoUsd: number, maxUsd: number): number | undefined {
+  const c = (x: number) => Math.round(x * 100) / 100;
+  const under = (x: number) => c(Math.floor(x) - 0.01); // x.99 strictly below x
+  const mid = (autoUsd + maxUsd) / 2;
+  const p = s === "approval" ? (under(mid) > autoUsd ? under(mid) : c(mid))
+    : s === "blocked" ? Math.max(under(maxUsd * 1.08), c(maxUsd + 1))
+    : Math.max(under(Math.min(current, autoUsd * 0.95)), c(autoUsd / 2)); // auto + attack: a visible drop into the auto band
+  const ok = s === "approval" ? p > autoUsd && p <= maxUsd : s === "blocked" ? p > maxUsd : p > 0 && p <= autoUsd;
+  return ok ? p : undefined;
+}
+/** An EOA that is not in the merchant registry: where a prompt-injected checkout page would send the money. */
+const ATTACKER = "0x000000000000000000000000000000000000bad1" as Hex;
 
 // ---------- routes ----------
 
@@ -790,6 +815,32 @@ export function mountHero(app: Express, deps: Deps) {
     const r = mine(res, requests.get(req.params.id));
     if (!r) return res.status(404).end();
     await onPrice(r, Number(req.body?.price), deps);
+    await strategize(r);
+    res.json(requestView(r));
+  });
+
+  // Hidden stage controls: move the price into a chosen band (same path as /price), or put the request back.
+  app.post("/api/requests/:id/demo", async (req, res) => {
+    const r = mine(res, requests.get(req.params.id));
+    if (!r) return res.status(404).end();
+    const s = req.body?.scenario;
+    if (s === "reset") {
+      for (const [id, a] of approvals) if (a.requestId === r.id && (a.status === "pending" || a.status === "approved")) approvals.delete(id);
+      Object.assign(r, { status: "watching", boughtAt: undefined, boughtPrice: undefined });
+      if (r.demoFrom !== undefined) {
+        r.currentPrice = r.demoFrom;
+        r.priceHistory.push({ date: iso(Date.now()), price: r.demoFrom });
+        r.demoFrom = undefined;
+      }
+      r.activity.push({ date: iso(Date.now()), text: "Demo reset: watching again" });
+    } else {
+      if (!["auto", "approval", "blocked", "attack"].includes(s)) return res.status(400).json({ error: "bad_scenario" });
+      if (requestView(r).status !== "watching") return res.status(409).json({ error: "not_watching" });
+      const price = demoPrice(s, r.currentPrice, r.autoUsd, r.maxUsd);
+      if (price === undefined) return res.status(400).json({ error: "no_band" });
+      r.demoFrom ??= r.currentPrice;
+      await onPrice(r, price, deps, s === "attack" ? ATTACKER : undefined);
+    }
     await strategize(r);
     res.json(requestView(r));
   });
