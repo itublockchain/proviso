@@ -30,11 +30,16 @@ struct RootView: View {
                 case .signedOut:
                     SignInView()
                 case .signedIn:
-                    RootTabView()
+                    if store.walletStatus == .ready || store.walletStatus == .demo {
+                        RootTabView()
+                    } else {
+                        WalletSetupView()
+                    }
                 }
             }
         }
         .animation(.default, value: store.onboardingSeen)
+        .animation(.default, value: store.walletStatus)
     }
 }
 
