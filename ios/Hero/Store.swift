@@ -7,10 +7,16 @@ import SwiftUI
 @MainActor
 final class Store {
     var demoMode: Bool {
-        didSet { UserDefaults.standard.set(demoMode, forKey: "hero.demoMode") }
+        didSet {
+            UserDefaults.standard.set(demoMode, forKey: "hero.demoMode")
+            Task { await loadAll() } // switch data source right away
+        }
     }
     var backendURLString: String {
-        didSet { UserDefaults.standard.set(backendURLString, forKey: "hero.backendURL") }
+        didSet {
+            UserDefaults.standard.set(backendURLString, forKey: "hero.backendURL")
+            if !demoMode { Task { await loadAll() } }
+        }
     }
 
     var requests: [HeroRequest] = []
@@ -23,18 +29,20 @@ final class Store {
     var approvalsPath: [String] = []
 
     private var mockAPI = MockAPI()
+    /// Public tunnel to the demo backend, so the app works on a real phone too.
+    static let defaultBackend = "https://uncookable-izaiah-dualistic.ngrok-free.dev"
 
     private var api: API {
         if demoMode {
             return mockAPI
         }
-        let url = URL(string: backendURLString) ?? URL(string: "http://localhost:8787")!
+        let url = URL(string: backendURLString) ?? URL(string: Self.defaultBackend)!
         return LiveAPI(baseURL: url)
     }
 
     init() {
         self.demoMode = UserDefaults.standard.object(forKey: "hero.demoMode") as? Bool ?? true
-        self.backendURLString = UserDefaults.standard.string(forKey: "hero.backendURL") ?? "http://localhost:8787"
+        self.backendURLString = UserDefaults.standard.string(forKey: "hero.backendURL") ?? Self.defaultBackend
     }
 
     func loadAll() async {
