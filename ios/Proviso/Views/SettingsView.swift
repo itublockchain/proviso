@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(Store.self) private var store
     @State private var showWalletSetup = false
-    @AppStorage("hero.showDemoControls") private var showDemoControls = false
+    @AppStorage("proviso.showDemoControls") private var showDemoControls = false
     @State private var showResetConfirm = false
     @State private var isResetting = false
 
@@ -157,7 +157,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "About").padding(.bottom, Theme.spacingS)
             HairlineDivider()
-            settingsRow("App", heroAppName)
+            settingsRow("App", appName)
             HairlineDivider()
             Link("Etherscan Sepolia", destination: URL(string: "https://sepolia.etherscan.io")!)
                 .font(.subheadline)

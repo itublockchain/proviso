@@ -2,9 +2,9 @@ import Foundation
 
 protocol API: Sendable {
     func chat(requestId: String?, message: String) async throws -> ChatReply
-    func createRequest(_ draft: RequestDraft) async throws -> HeroRequest
-    func fetchRequests() async throws -> [HeroRequest]
-    func fetchRequest(id: String) async throws -> HeroRequest
+    func createRequest(_ draft: RequestDraft) async throws -> ProvisoRequest
+    func fetchRequests() async throws -> [ProvisoRequest]
+    func fetchRequest(id: String) async throws -> ProvisoRequest
     func fetchApprovals() async throws -> [Approval]
     func fetchApproval(id: String) async throws -> Approval
     func fetchBudgets() async throws -> BudgetsResponse
@@ -15,7 +15,7 @@ protocol API: Sendable {
     func logout() async throws
     func startWallet(handle: String?) async throws -> WalletStart
     func useDemoWallet() async throws
-    func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest
+    func demo(requestId: String, scenario: DemoScenario) async throws -> ProvisoRequest
     /// POST api/dev/reset — hackathon-only: wipes the signed-in account (chain + backend rows),
     /// frees their ENS name; the session is invalid immediately after this returns.
     func resetEverything() async throws -> ResetResult
@@ -107,15 +107,15 @@ final class LiveAPI: API {
         try await send("POST", "api/chat", body: ChatBody(requestId: requestId, message: message))
     }
 
-    func createRequest(_ draft: RequestDraft) async throws -> HeroRequest {
+    func createRequest(_ draft: RequestDraft) async throws -> ProvisoRequest {
         try await send("POST", "api/requests", body: draft)
     }
 
-    func fetchRequests() async throws -> [HeroRequest] {
+    func fetchRequests() async throws -> [ProvisoRequest] {
         try await get("api/requests")
     }
 
-    func fetchRequest(id: String) async throws -> HeroRequest {
+    func fetchRequest(id: String) async throws -> ProvisoRequest {
         try await get("api/requests/\(id)")
     }
 
@@ -164,7 +164,7 @@ final class LiveAPI: API {
     }
 
     private struct DemoBody: Encodable { var scenario: DemoScenario }
-    func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest {
+    func demo(requestId: String, scenario: DemoScenario) async throws -> ProvisoRequest {
         try await send("POST", "api/requests/\(requestId)/demo", body: DemoBody(scenario: scenario))
     }
 

@@ -27,7 +27,7 @@ enum MockData {
     static func daysFromNow(_ n: Int) -> Date { cal.date(byAdding: .day, value: n, to: now)! }
     static func daysAgo(_ n: Int) -> Date { cal.date(byAdding: .day, value: -n, to: now)! }
 
-    static let sonyTV = HeroRequest(
+    static let sonyTV = ProvisoRequest(
         id: "req-sony-tv",
         title: "Sony 55\" TV",
         query: "I want a Sony 55\" TV, must arrive within 1 month, never above $500, buy on your own under $400",
@@ -73,7 +73,7 @@ enum MockData {
         historyModeled: true
     )
 
-    static let ps5 = HeroRequest(
+    static let ps5 = ProvisoRequest(
         id: "req-ps5",
         title: "PlayStation 5",
         query: "Grab a PS5 disc edition, must arrive in 2 weeks, max $500, auto-buy under $400",
@@ -115,7 +115,7 @@ enum MockData {
         historyModeled: true
     )
 
-    static let lego = HeroRequest(
+    static let lego = ProvisoRequest(
         id: "req-lego",
         title: "LEGO Millennium Falcon",
         query: "Buy the LEGO Millennium Falcon set whenever it drops under $650",
@@ -183,7 +183,7 @@ enum MockData {
         historyModeled: true
     )
 
-    static let switch2 = HeroRequest(
+    static let switch2 = ProvisoRequest(
         id: "req-switch",
         title: "Nintendo Switch 2",
         query: "Get me a Switch 2 within budget, deadline was last week",
@@ -214,7 +214,7 @@ enum MockData {
         ]
     )
 
-    static let requests: [HeroRequest] = [sonyTV, ps5, lego, switch2]
+    static let requests: [ProvisoRequest] = [sonyTV, ps5, lego, switch2]
 
     static let approvals: [Approval] = [
         Approval(
@@ -265,7 +265,7 @@ enum MockData {
 
 /// Fully offline API implementation backed by MockData. Default so the app demos without a backend.
 actor MockAPI: API {
-    private var requests: [HeroRequest] = MockData.requests
+    private var requests: [ProvisoRequest] = MockData.requests
     private var approvals: [Approval] = MockData.approvals
     private var categories: [Category] = [MockData.hobbyCategory, MockData.needsCategory]
     private var worldLinked = false
@@ -302,8 +302,8 @@ actor MockAPI: API {
         )
     }
 
-    func createRequest(_ draft: RequestDraft) async throws -> HeroRequest {
-        let new = HeroRequest(
+    func createRequest(_ draft: RequestDraft) async throws -> ProvisoRequest {
+        let new = ProvisoRequest(
             id: "req-\(UUID().uuidString.prefix(8))",
             title: draft.title,
             query: draft.query,
@@ -331,9 +331,9 @@ actor MockAPI: API {
         return new
     }
 
-    func fetchRequests() async throws -> [HeroRequest] { requests }
+    func fetchRequests() async throws -> [ProvisoRequest] { requests }
 
-    func fetchRequest(id: String) async throws -> HeroRequest {
+    func fetchRequest(id: String) async throws -> ProvisoRequest {
         guard let r = requests.first(where: { $0.id == id }) else { throw APIError.badResponse }
         return r
     }
@@ -418,8 +418,8 @@ actor MockAPI: API {
         walletStatus = .provisioning
         let token = UUID().uuidString.prefix(10).lowercased()
         return WalletStart(
-            url: "https://link.metamask.io/dapp/hero-demo.ngrok-free.dev/w/\(token)",
-            pageUrl: "https://hero-demo.ngrok-free.dev/w/\(token)"
+            url: "https://link.metamask.io/dapp/proviso-demo.ngrok-free.dev/w/\(token)",
+            pageUrl: "https://proviso-demo.ngrok-free.dev/w/\(token)"
         )
     }
 
@@ -436,7 +436,7 @@ actor MockAPI: API {
     private var demoFrom: [String: Double] = [:]
 
     /// Mirrors POST api/requests/{id}/demo: same bands, same activity lines, no chain.
-    func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest {
+    func demo(requestId: String, scenario: DemoScenario) async throws -> ProvisoRequest {
         try? await Task.sleep(for: .milliseconds(400))
         guard let i = requests.firstIndex(where: { $0.id == requestId }) else { throw APIError.badResponse }
         var r = requests[i]

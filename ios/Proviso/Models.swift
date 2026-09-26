@@ -72,7 +72,7 @@ struct Strategy: Codable, Hashable {
     var confidence: Double
 }
 
-struct HeroRequest: Codable, Identifiable, Hashable {
+struct ProvisoRequest: Codable, Identifiable, Hashable {
     var id: String
     var title: String
     var query: String
@@ -105,7 +105,7 @@ struct HeroRequest: Codable, Identifiable, Hashable {
     var setupError: String? = nil
 }
 
-/// One store's live price for the request's product (`HeroRequest.offers`).
+/// One store's live price for the request's product (`ProvisoRequest.offers`).
 struct StoreOffer: Codable, Hashable, Identifiable {
     var store: String
     var price: Double
@@ -126,7 +126,7 @@ struct OrderStep: Codable, Hashable, Identifiable {
     var id: String { status }
 }
 
-/// GET merchant/orders/{id} (public) and embedded in `HeroRequest.order`: the merchant's
+/// GET merchant/orders/{id} (public) and embedded in `ProvisoRequest.order`: the merchant's
 /// EIP-712-signed receipt for a bought item, plus a simulated fulfillment timeline.
 struct MerchantOrder: Codable, Hashable, Identifiable {
     var id: String

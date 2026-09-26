@@ -4,7 +4,7 @@ import Security
 /// Minimal Keychain-backed storage for the World ID sign-in session token.
 /// One item, one account — no wrapper library needed for a single opaque bearer token.
 enum Keychain {
-    private static let service = "com.ethtokyo.hero"
+    private static let service = "com.ethtokyo.proviso"
     private static let account = "session"
 
     static var token: String? {

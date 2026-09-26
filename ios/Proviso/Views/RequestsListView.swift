@@ -4,7 +4,7 @@ struct RequestsListView: View {
     @Environment(Store.self) private var store
     @State private var searchText = ""
 
-    private var filtered: [HeroRequest] {
+    private var filtered: [ProvisoRequest] {
         guard !searchText.isEmpty else { return store.requests }
         return store.requests.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
     }
@@ -49,7 +49,7 @@ struct RequestsListView: View {
                 }
             }
             .background(Theme.background)
-            .navigationTitle(heroAppName)
+            .navigationTitle(appName)
             .searchable(text: $searchText, prompt: "Search requests")
             .navigationDestination(for: String.self) { id in
                 if let request = store.request(id: id) {
@@ -62,7 +62,7 @@ struct RequestsListView: View {
 }
 
 private struct RequestRow: View {
-    let request: HeroRequest
+    let request: ProvisoRequest
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {

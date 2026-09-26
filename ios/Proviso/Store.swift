@@ -8,18 +8,18 @@ import SwiftUI
 final class Store {
     var demoMode: Bool {
         didSet {
-            UserDefaults.standard.set(demoMode, forKey: "hero.demoMode")
+            UserDefaults.standard.set(demoMode, forKey: "proviso.demoMode")
             Task { await loadSession() } // switch data source right away
         }
     }
     var backendURLString: String {
         didSet {
-            UserDefaults.standard.set(backendURLString, forKey: "hero.backendURL")
+            UserDefaults.standard.set(backendURLString, forKey: "proviso.backendURL")
             if !demoMode { Task { await loadSession() } }
         }
     }
 
-    var requests: [HeroRequest] = []
+    var requests: [ProvisoRequest] = []
     var approvals: [Approval] = []
     var budgets: BudgetsResponse?
     var isLoading = false
@@ -34,7 +34,7 @@ final class Store {
     /// Mandatory Sign in with World ID: `nil` while the session is still being checked at launch.
     var me: Me?
     var onboardingSeen: Bool {
-        didSet { UserDefaults.standard.set(onboardingSeen, forKey: "hero.onboardingSeen") }
+        didSet { UserDefaults.standard.set(onboardingSeen, forKey: "proviso.onboardingSeen") }
     }
 
     enum AuthPhase { case loading, signedOut, signedIn }
@@ -48,7 +48,7 @@ final class Store {
     private var mockAPI = MockAPI()
     /// Public tunnel to the demo backend, so the app works on a real phone too.
     static let defaultBackend = "https://uncookable-izaiah-dualistic.ngrok-free.dev"
-    private static let demoSignedInKey = "hero.demoSignedIn"
+    private static let demoSignedInKey = "proviso.demoSignedIn"
 
     private var api: API {
         if demoMode {
@@ -59,9 +59,9 @@ final class Store {
     }
 
     init() {
-        self.demoMode = UserDefaults.standard.object(forKey: "hero.demoMode") as? Bool ?? true
-        self.backendURLString = UserDefaults.standard.string(forKey: "hero.backendURL") ?? Self.defaultBackend
-        self.onboardingSeen = UserDefaults.standard.bool(forKey: "hero.onboardingSeen")
+        self.demoMode = UserDefaults.standard.object(forKey: "proviso.demoMode") as? Bool ?? true
+        self.backendURLString = UserDefaults.standard.string(forKey: "proviso.backendURL") ?? Self.defaultBackend
+        self.onboardingSeen = UserDefaults.standard.bool(forKey: "proviso.onboardingSeen")
     }
 
     /// Runs an API call, and on a 401 sign-out-required response drops the local session so the
@@ -148,7 +148,7 @@ final class Store {
         }
     }
 
-    func request(id: String) -> HeroRequest? {
+    func request(id: String) -> ProvisoRequest? {
         requests.first { $0.id == id }
     }
 

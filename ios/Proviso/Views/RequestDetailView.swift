@@ -3,21 +3,21 @@ import Charts
 import SafariServices
 
 struct RequestDetailView: View {
-    let request: HeroRequest
+    let request: ProvisoRequest
     @Environment(Store.self) private var store
     /// Settings → "Show demo controls": adds a visible Demo button for rehearsal.
-    @AppStorage("hero.showDemoControls") private var showDemoControls = false
+    @AppStorage("proviso.showDemoControls") private var showDemoControls = false
     @State private var showDemoMenu = false
     @State private var demoError: String?
 
     /// The freshest copy of this request — the Store may have a newer one from polling.
-    private var current: HeroRequest { store.request(id: request.id) ?? request }
+    private var current: ProvisoRequest { store.request(id: request.id) ?? request }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.spacingXL) {
-                    heroHeader
+                    imageHeader
                     if current.preparing != nil || current.setupError != nil {
                         SetupCard(request: current)
                     }
@@ -101,9 +101,9 @@ struct RequestDetailView: View {
         }
     }
 
-    private var heroHeader: some View {
+    private var imageHeader: some View {
         VStack(alignment: .leading, spacing: Theme.spacingM) {
-            DetailHeroImage(imageUrl: current.imageUrl, category: current.category)
+            DetailImage(imageUrl: current.imageUrl, category: current.category)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -162,9 +162,9 @@ struct RequestDetailView: View {
     }
 }
 
-/// Big rounded hero image for the detail screen — falls back to the same category glyph as
+/// Big rounded product image for the detail screen — falls back to the same category glyph as
 /// ``ProductThumbnail`` when there's no product photo.
-private struct DetailHeroImage: View {
+private struct DetailImage: View {
     let imageUrl: String?
     let category: String
 
@@ -201,7 +201,7 @@ private struct DetailHeroImage: View {
 /// approved, the on-chain payment, and a simulated merchant fulfillment timeline.
 private struct OrderSection: View {
     let order: MerchantOrder
-    let request: HeroRequest
+    let request: ProvisoRequest
     @Environment(Store.self) private var store
     @State private var safariURL: URL?
 
@@ -349,7 +349,7 @@ private struct OrderTimelineView: View {
 /// The key visual: a single bar spanning auto-buy / needs-approval / blocked ranges, with a
 /// marker showing where the current price sits.
 private struct PolicyBar: View {
-    let request: HeroRequest
+    let request: ProvisoRequest
 
     private var domainMax: Double {
         max(request.maxUsd, request.currentPrice) * 1.08
@@ -413,7 +413,7 @@ private extension Comparable {
 }
 
 private struct PriceHistoryChart: View {
-    let request: HeroRequest
+    let request: ProvisoRequest
     @State private var selectedDate: Date?
 
     private var yLow: Double {
@@ -616,7 +616,7 @@ private struct StrategySection: View {
 }
 
 private struct PolicySection: View {
-    let request: HeroRequest
+    let request: ProvisoRequest
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.spacingS) {
@@ -731,11 +731,11 @@ struct SafariView: UIViewControllerRepresentable {
 /// Right after "Save rules": the backend is still comparing stores, writing the rules to ENS and planning.
 /// Shows the running step, and the reason in plain words if setup stopped.
 private struct SetupCard: View {
-    let request: HeroRequest
+    let request: ProvisoRequest
     private static let steps = ["Comparing stores", "Writing your rules to ENS", "Planning when to buy"]
 
     var body: some View {
-        HeroCard {
+        ProvisoCard {
             VStack(alignment: .leading, spacing: Theme.spacingS) {
                 if let error = request.setupError {
                     Label("Setup stopped", systemImage: "exclamationmark.triangle.fill")

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// App-wide product name constant.
-let heroAppName = "Proviso"
+let appName = "Proviso"
 
 extension Color {
     /// A color that adapts between light and dark mode without needing an asset catalog entry.
@@ -49,7 +49,7 @@ private extension UIColor {
 /// Reserved surface — use only where a container carries real meaning (the one pending
 /// approval action, the World ID code, a terminal success/failure state). Everything else in
 /// the app should be plain typography with hairline dividers, not a boxed card.
-struct HeroCard<Content: View>: View {
+struct ProvisoCard<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {

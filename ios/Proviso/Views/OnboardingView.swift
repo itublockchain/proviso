@@ -151,7 +151,7 @@ private struct IllustrationStage: View {
 
     var body: some View {
         switch index {
-        case 0: HeroMarkIllustration(appeared: appeared)
+        case 0: ProvisoMarkIllustration(appeared: appeared)
         case 1: ChatIllustration(appeared: appeared)
         case 2: PriceChartIllustration(appeared: appeared)
         case 3: WalletLockIllustration(appeared: appeared)
@@ -165,7 +165,7 @@ private struct IllustrationStage: View {
 
 // MARK: - Page 1: Proviso mark
 
-private struct HeroMarkIllustration: View {
+private struct ProvisoMarkIllustration: View {
     let appeared: Bool
 
     var body: some View {

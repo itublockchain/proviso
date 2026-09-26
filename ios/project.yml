@@ -1,6 +1,6 @@
-name: Hero
+name: Proviso
 options:
-  bundleIdPrefix: com.ethtokyo.hero
+  bundleIdPrefix: com.ethtokyo.proviso
   deploymentTarget:
     iOS: "26.0"
 settings:
@@ -9,25 +9,25 @@ settings:
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
 targets:
-  Hero:
+  Proviso:
     type: application
     platform: iOS
     deploymentTarget: "26.0"
     sources:
-      - path: Hero
+      - path: Proviso
     info:
-      path: Hero/Info.plist
+      path: Proviso/Info.plist
       properties:
         CFBundleDisplayName: Proviso
         UILaunchScreen: {}
         CFBundleURLTypes:
-          - CFBundleURLName: com.ethtokyo.hero
+          - CFBundleURLName: com.ethtokyo.proviso
             CFBundleURLSchemes: [proviso]
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.ethtokyo.hero
+        PRODUCT_BUNDLE_IDENTIFIER: com.ethtokyo.proviso
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: false
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

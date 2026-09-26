@@ -22,7 +22,7 @@ struct ApprovalDetailView: View {
                     }
                     approveButton
                 } else if approval.status == .approved {
-                    HeroCard {
+                    ProvisoCard {
                         HStack {
                             ProgressView()
                             Text("Approved — finalizing purchase…").foregroundStyle(Theme.textPrimary)
@@ -33,7 +33,7 @@ struct ApprovalDetailView: View {
                     successCard
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 } else {
-                    HeroCard {
+                    ProvisoCard {
                         VStack(alignment: .leading, spacing: 6) {
                             Label(approval.status == .expired ? "Approval expired" : "Purchase blocked",
                                   systemImage: "xmark.shield.fill")
@@ -166,7 +166,7 @@ struct ApprovalDetailView: View {
     }
 
     private var successCard: some View {
-        HeroCard {
+        ProvisoCard {
             VStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 44))

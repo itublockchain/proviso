@@ -6,7 +6,7 @@ struct WorldIDCodeCard: View {
     let code: String
 
     var body: some View {
-        HeroCard {
+        ProvisoCard {
             VStack(spacing: 12) {
                 Label("Confirm with World ID", systemImage: "checkmark.seal.fill")
                     .font(.headline)
@@ -103,7 +103,7 @@ private struct WorldIDLinkSheet: View {
                         .buttonStyle(.borderedProminent)
                         .tint(Theme.accentGreen)
                     case .linked:
-                        HeroCard {
+                        ProvisoCard {
                             VStack(spacing: 10) {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 44))
@@ -113,7 +113,7 @@ private struct WorldIDLinkSheet: View {
                             .frame(maxWidth: .infinity)
                         }
                     case .denied, .expired:
-                        HeroCard {
+                        ProvisoCard {
                             VStack(alignment: .leading, spacing: 6) {
                                 Label(status == .expired ? "Link expired" : "Link denied", systemImage: "xmark.shield.fill")
                                     .font(.headline)
