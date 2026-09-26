@@ -13,18 +13,26 @@ protocol API: Sendable {
     func fetchWorldLinkStatus(id: String) async throws -> WorldLinkStatusResponse
     func me() async throws -> Me
     func logout() async throws
+    func startWallet(handle: String?) async throws -> WalletStart
+    func useDemoWallet() async throws
 }
 
 enum APIError: Error, LocalizedError {
     case badResponse
     case decoding(Error)
     case sessionExpired
+    /// PUT api/budgets/{name} on a wallet account: only the user's own wallet can change limits.
+    case walletRequired
+    /// Any other `{"error": "..."}` body from a non-2xx response, shown to the user as-is.
+    case server(String)
 
     var errorDescription: String? {
         switch self {
         case .badResponse: return "The server returned an unexpected response."
         case .decoding(let e): return "Failed to decode response: \(e.localizedDescription)"
         case .sessionExpired: return "Your session expired. Sign in again."
+        case .walletRequired: return "Only your wallet can change this"
+        case .server(let message): return message
         }
     }
 }
@@ -69,15 +77,17 @@ final class LiveAPI: API {
         return try decoder.decode(T.self, from: data)
     }
 
-    /// A 401 with `{"error":"sign_in_required"}` means the session is gone — the caller signs out; anything else is a generic failure.
+    /// A 401 with `{"error":"sign_in_required"}` means the session is gone — the caller signs out.
+    /// A 409 with `{"error":"wallet_required"}` (PUT budgets on a wallet account) maps to a
+    /// friendly message; any other `{"error": "..."}` body is surfaced as-is (e.g. wallet/start
+    /// handle validation); anything else is a generic failure.
     private static func validate(_ response: URLResponse, _ data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
         guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401,
-               let body = try? JSONDecoder().decode([String: String].self, from: data),
-               body["error"] == "sign_in_required" {
-                throw APIError.sessionExpired
-            }
+            let body = try? JSONDecoder().decode([String: String].self, from: data)
+            if http.statusCode == 401, body?["error"] == "sign_in_required" { throw APIError.sessionExpired }
+            if http.statusCode == 409, body?["error"] == "wallet_required" { throw APIError.walletRequired }
+            if let message = body?["error"] { throw APIError.server(message) }
             throw APIError.badResponse
         }
     }
@@ -134,5 +144,14 @@ final class LiveAPI: API {
     private struct OkResponse: Decodable { var ok: Bool }
     func logout() async throws {
         let _: OkResponse = try await send("POST", "api/logout", body: EmptyBody())
+    }
+
+    private struct WalletStartBody: Encodable { var handle: String? }
+    func startWallet(handle: String?) async throws -> WalletStart {
+        try await send("POST", "api/wallet/start", body: WalletStartBody(handle: handle))
+    }
+
+    func useDemoWallet() async throws {
+        let _: OkResponse = try await send("POST", "api/wallet/demo", body: EmptyBody())
     }
 }

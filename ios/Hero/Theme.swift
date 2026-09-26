@@ -140,6 +140,12 @@ extension Double {
 }
 
 extension String {
+    /// Shortens a 0x address to `0xabcd...ef01` for display; leaves short strings untouched.
+    var shortAddress: String {
+        guard count > 10 else { return self }
+        return "\(prefix(6))...\(suffix(4))"
+    }
+
     /// Best-effort SF Symbol + tint for a request category, used as a thumbnail placeholder
     /// when no product image is available.
     var categoryIcon: (symbol: String, tint: Color) {

@@ -219,6 +219,7 @@ actor MockAPI: API {
     private var worldLinked = false
     private var pendingWorldLinkId: String?
     private var signedIn = false
+    private var walletStatus: WalletStatus = .none
 
     func chat(requestId: String?, message: String) async throws -> ChatReply {
         try? await Task.sleep(for: .milliseconds(500))
@@ -344,18 +345,40 @@ actor MockAPI: API {
 
     func me() async throws -> Me {
         guard signedIn else { return .signedOut }
+        let hasWallet = walletStatus == .ready || walletStatus == .demo
         return Me(
             signedIn: true,
             sub: "demo0badc0de",
             authTime: MockData.now,
             acr: orbVerifiedAcr,
             worldLinked: worldLinked,
-            wallet: MockData.wallet.address,
-            ensRoot: MockData.wallet.ensRoot
+            wallet: hasWallet ? MockData.wallet.address : nil,
+            ensRoot: hasWallet ? MockData.wallet.ensRoot : nil,
+            walletStatus: walletStatus
         )
     }
 
     func logout() async throws { signedIn = false }
+
+    /// POST api/wallet/start — fake MetaMask deep link + fallback page; Store.startWallet()
+    /// schedules simulateWalletReady() right after this in demo mode.
+    func startWallet(handle: String?) async throws -> WalletStart {
+        walletStatus = .provisioning
+        let token = UUID().uuidString.prefix(10).lowercased()
+        return WalletStart(
+            url: "https://link.metamask.io/dapp/hero-demo.ngrok-free.dev/w/\(token)",
+            pageUrl: "https://hero-demo.ngrok-free.dev/w/\(token)"
+        )
+    }
+
+    /// POST api/wallet/demo — switches the mock account to the Hero-held demo wallet right away.
+    func useDemoWallet() async throws { walletStatus = .demo }
+
+    /// Simulates the user finishing the 3 MetaMask signatures a few seconds after startWallet().
+    func simulateWalletReady() async {
+        try? await Task.sleep(for: .seconds(4))
+        if walletStatus == .provisioning { walletStatus = .ready }
+    }
 
     private static func randomUserCode() -> String {
         let letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"

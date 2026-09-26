@@ -152,6 +152,14 @@ struct BudgetsResponse: Codable {
     var categories: [Category]
 }
 
+/// Wallet provisioning state on the account (see api/me, api/wallet/start, api/wallet/demo).
+enum WalletStatus: String, Codable {
+    case none
+    case provisioning
+    case ready
+    case demo
+}
+
 /// GET api/me — current Sign in with World ID state.
 struct Me: Codable {
     var signedIn: Bool
@@ -161,8 +169,15 @@ struct Me: Codable {
     var worldLinked: Bool
     var wallet: String?
     var ensRoot: String?
+    var walletStatus: WalletStatus?
 
-    static let signedOut = Me(signedIn: false, sub: nil, authTime: nil, acr: nil, worldLinked: false, wallet: nil, ensRoot: nil)
+    static let signedOut = Me(signedIn: false, sub: nil, authTime: nil, acr: nil, worldLinked: false, wallet: nil, ensRoot: nil, walletStatus: nil)
+}
+
+/// POST api/wallet/start response: MetaMask universal link and the same page on our https origin.
+struct WalletStart: Codable {
+    var url: String
+    var pageUrl: String
 }
 
 /// The `acr` value World ID reports for an Orb-verified human (see backend `worldid.ts`).

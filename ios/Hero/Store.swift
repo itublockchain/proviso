@@ -40,6 +40,7 @@ final class Store {
         return me.signedIn ? .signedIn : .signedOut
     }
     var isSignedIn: Bool { me?.signedIn == true }
+    var walletStatus: WalletStatus { me?.walletStatus ?? .none }
 
     private var mockAPI = MockAPI()
     /// Public tunnel to the demo backend, so the app works on a real phone too.
@@ -175,12 +176,21 @@ final class Store {
     }
 
     /// hero://approval/<orderId> — World App's `return_to` lands here after the user approves.
+    /// hero://wallet?ok=1 — the MetaMask-hosted setup page's best-effort return after wallet setup.
     func handleDeepLink(_ url: URL) {
-        guard url.scheme == "hero", url.host() == "approval", !url.lastPathComponent.isEmpty, url.lastPathComponent != "/" else { return }
-        let orderId = url.lastPathComponent
-        selectedTab = 1
-        if approvalsPath.last != orderId { approvalsPath = [orderId] }
-        Task { await refreshApproval(orderId: orderId) }
+        guard url.scheme == "hero" else { return }
+        switch url.host() {
+        case "approval":
+            guard !url.lastPathComponent.isEmpty, url.lastPathComponent != "/" else { return }
+            let orderId = url.lastPathComponent
+            selectedTab = 1
+            if approvalsPath.last != orderId { approvalsPath = [orderId] }
+            Task { await refreshApproval(orderId: orderId) }
+        case "wallet":
+            Task { await loadSession() }
+        default:
+            break
+        }
     }
 
     func refreshApproval(orderId: String) async {
@@ -199,5 +209,19 @@ final class Store {
 
     func worldLinkStatus(id: String) async throws -> WorldLinkStatusResponse {
         try await api.fetchWorldLinkStatus(id: id)
+    }
+
+    /// Starts wallet setup: returns the MetaMask deep link + fallback page URL. In demo mode,
+    /// flips the mock account to "ready" after a few seconds so the polling UI has something to see.
+    func startWallet(handle: String?) async throws -> WalletStart {
+        let start = try await run { try await api.startWallet(handle: handle) }
+        if demoMode { Task { await mockAPI.simulateWalletReady() } }
+        return start
+    }
+
+    /// "Use demo wallet" — switches the account to the Hero-held demo wallet.
+    func useDemoWallet() async throws {
+        try await run { try await api.useDemoWallet() }
+        await loadSession()
     }
 }
