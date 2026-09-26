@@ -5,6 +5,7 @@ private struct ChatMessage: Identifiable {
     let id = UUID()
     let role: Role
     let text: String
+    var suggestions: [ModelSuggestion] = []
 }
 
 struct NewRequestComposerView: View {
@@ -17,6 +18,8 @@ struct NewRequestComposerView: View {
     @State private var input = ""
     @FocusState private var inputFocused: Bool
     @State private var draft: RequestDraft?
+    /// The rules parsed from a vague message, waiting for the user to pick one of the suggested models.
+    @State private var pendingDraft: RequestDraft?
     @State private var isSending = false
     @State private var errorMessage: String?
 
@@ -30,6 +33,9 @@ struct NewRequestComposerView: View {
                         ForEach(messages) { message in
                             ChatBubble(message: message)
                                 .id(message.id)
+                            if !message.suggestions.isEmpty {
+                                SuggestionList(suggestions: message.suggestions, enabled: pendingDraft != nil && draft == nil, pick: choose)
+                            }
                         }
                         if isSending {
                             ProgressView().padding(.leading, 4)
@@ -143,15 +149,32 @@ struct NewRequestComposerView: View {
         Task {
             do {
                 let reply = try await store.sendChat(requestId: nil, message: text)
-                messages.append(ChatMessage(role: .agent, text: reply.reply))
-                if let d = reply.draft {
-                    withAnimation { draft = d }
+                if let s = reply.suggestions, !s.isEmpty, let d = reply.draft {
+                    pendingDraft = d
+                    withAnimation { draft = nil }
+                    messages.append(ChatMessage(role: .agent, text: reply.reply, suggestions: s))
+                } else {
+                    messages.append(ChatMessage(role: .agent, text: reply.reply))
+                    if let d = reply.draft {
+                        pendingDraft = nil
+                        withAnimation { draft = d }
+                    }
                 }
             } catch {
                 errorMessage = error.localizedDescription
             }
             isSending = false
         }
+    }
+
+    /// The picked model becomes the request: same rules, exact product.
+    private func choose(_ s: ModelSuggestion) {
+        guard var d = pendingDraft else { return }
+        d.title = s.title
+        d.query = s.query
+        pendingDraft = nil
+        messages.append(ChatMessage(role: .user, text: s.title))
+        withAnimation { draft = d }
     }
 
     private func confirm() {
@@ -263,5 +286,49 @@ private struct PolicyStrip: View {
         .frame(height: 6)
         .animation(.spring(duration: 0.3), value: auto)
         .animation(.spring(duration: 0.3), value: max)
+    }
+}
+
+/// The agent's model picks for a vague request: tap one to make it the request's product.
+private struct SuggestionList: View {
+    let suggestions: [ModelSuggestion]
+    let enabled: Bool
+    let pick: (ModelSuggestion) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, s in
+                if index > 0 { HairlineDivider() }
+                Button { pick(s) } label: {
+                    HStack(spacing: 12) {
+                        ProductThumbnail(imageUrl: s.image, category: "Hobby", size: 44)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(s.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(2)
+                            if !s.why.isEmpty {
+                                Text(s.why).font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(s.priceUsd.usd).font(.subheadline.monospacedDigit().weight(.semibold)).foregroundStyle(Theme.textPrimary)
+                            Text(s.store).font(.caption2).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                        }
+                    }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!enabled)
+            }
+        }
+        .padding(.horizontal, Theme.cardPadding)
+        .padding(.vertical, 4)
+        .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .opacity(enabled ? 1 : 0.55)
+        .sensoryFeedback(.selection, trigger: enabled)
     }
 }

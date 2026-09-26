@@ -211,12 +211,38 @@ function heuristicDraft(msg: string): Draft {
   return { title: title[0].toUpperCase() + title.slice(1), query: title, category: needs ? "Needs" : "Hobby", autoUsd, maxUsd, deadline: iso(Date.now() + days * DAY) };
 }
 
-async function parseDraft(msg: string): Promise<Draft> {
+/** The draft, and whether the message names one exact model ("Sony Bravia A80L 55") rather than a kind of product ("a 4K TV"). */
+async function parseChat(msg: string): Promise<{ draft: Draft; specific: boolean }> {
   const h = heuristicDraft(msg);
-  const ai = await claudeJson<Partial<Draft>>(
-    `Extract a purchase request as JSON {title, query (short product search query), category ("Hobby" or "Needs"), autoUsd (price the agent may buy at without asking), maxUsd (hard cap), deadlineDays}. If only a max is given, autoUsd = 80% of max. Message: ${JSON.stringify(msg)}`
+  const ai = await claudeJson<Partial<Draft> & { specific?: boolean }>(
+    `Extract a purchase request as JSON {title, query (short product search query), category ("Hobby" or "Needs"), autoUsd (price the agent may buy at without asking), maxUsd (hard cap), deadlineDays, specific}. If only a max is given, autoUsd = 80% of max. specific = true only if the message names one exact product model (brand + model, e.g. "Sony Bravia XR A80L 55", "PS5 Slim", "Nintendo Switch 2"), false for a kind of product ("a 4K TV", "gaming laptop", "wireless earbuds"). Message: ${JSON.stringify(msg)}`
   );
-  return mergeDraft(h, ai);
+  const draft = mergeDraft(h, ai);
+  return { draft, specific: typeof ai?.specific === "boolean" ? ai.specific : SPECIFIC.test(msg) };
+}
+// no model available: a digit or a well-known product line counts as naming a model
+const SPECIFIC = /\d|playstation|ps5|xbox|switch|iphone|ipad|macbook|airpods|galaxy|pixel|bravia|keychron|dyson|kindle|lego/i;
+
+type Suggestion = { title: string; query: string; priceUsd: number; store: string; image?: string; why: string };
+/** A kind of product -> live listings under the max (Monid) -> 3 distinct concrete models with a one-line reason (Claude). */
+export async function suggestModels(d: Draft, deps: Pick<Deps, "searchProducts">): Promise<Suggestion[]> {
+  const found = await deps.searchProducts(d.query, { minPriceUsd: d.maxUsd * 0.3, maxPriceUsd: d.maxUsd });
+  const seen = new Set<string>(), cands = found.filter((o) => {
+    const k = o.title.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 28);
+    return !seen.has(k) && !!seen.add(k);
+  }).slice(0, 12);
+  if (!cands.length) return [];
+  const ai = await claudeJson<{ picks?: { i: number; model: string; why: string }[] }>(
+    `A shopper wants ${JSON.stringify(d.title)}: at most $${d.maxUsd}, bought automatically up to $${d.autoUsd}. Live listings:\n` +
+    cands.map((o, i) => `${i}. ${o.title} | $${(o.priceMinor / 100).toFixed(2)} | ${o.store}`).join("\n") +
+    `\nPick 3 distinct, well-regarded specific models from these listings (different brands or tiers; favour ones at or under $${d.autoUsd}, at most one above it). Reply as JSON {"picks":[{"i": <listing number>, "model": "<clean brand + model name, no store or marketing words>", "why": "<one short reason, max 12 words>"}]}.`
+  );
+  const picks = (Array.isArray(ai?.picks) ? ai!.picks : []).filter((p) => Number.isInteger(p?.i) && cands[p.i]);
+  const chosen = picks.length ? picks : cands.slice(0, 3).map((o, i) => ({ i, model: o.title, why: "" }));
+  return chosen.slice(0, 4).map((p) => {
+    const o = cands[p.i], model = String((typeof p.model === "string" && p.model.trim()) || o.title).slice(0, 80);
+    return { title: model, query: model, priceUsd: o.priceMinor / 100, store: o.store, image: o.image, why: typeof p.why === "string" ? p.why : "" };
+  });
 }
 
 /** The model's fields win only when they are usable; a null/garbage field falls back to the heuristic instead of overwriting it. */
@@ -1291,7 +1317,14 @@ export function mountProviso(app: Express, deps: Deps) {
   });
 
   app.post("/api/chat", async (req, res) => {
-    const draft = await parseDraft(String(req.body?.message ?? ""));
+    const { draft, specific } = await parseChat(String(req.body?.message ?? ""));
+    if (!specific) { // a kind of product: the agent proposes concrete models to pick from, so the request watches one exact product
+      const suggestions = await suggestModels(draft, deps).catch((e) => { console.error("suggest", draft.query, e?.message ?? e); return []; });
+      if (suggestions.length) return res.json({
+        reply: `"${draft.title}" could be many things. I checked live stores for models up to ${usd(draft.maxUsd)}. Pick one and I'll watch it with your rules: buy on my own up to ${usd(draft.autoUsd)}, ask you up to ${usd(draft.maxUsd)}.`,
+        draft, suggestions,
+      });
+    }
     res.json({
       reply: `Got it: ${draft.title}. I will buy on my own up to ${usd(draft.autoUsd)}, ask you up to ${usd(draft.maxUsd)}, and never above that. Deadline ${new Date(draft.deadline).toDateString()}.`,
       draft,

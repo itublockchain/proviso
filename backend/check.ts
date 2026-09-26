@@ -357,7 +357,12 @@ assert.equal((await get("/api/me", mallory)).status, 401);
 assert.equal(JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"))[`${ISS}|mallory-sub`], undefined);
 assert.ok(!readFileSync(join(stateDir, ".state.json"), "utf8").includes(dup[2]));
 assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]); // other accounts untouched
-const { mergeDraft, statusLine, draftProblem } = await import("./proviso.js");
+const { mergeDraft, statusLine, draftProblem, suggestModels } = await import("./proviso.js");
+const listing = (title: string, usd: number) => ({ sku: title, title, merchant: "x", priceMinor: usd * 100, source: "google_shopping", store: "Best Buy", url: "https://x" }) as any;
+const sugg = await suggestModels({ title: "4K TV", category: "Hobby", autoUsd: 400, deadline: "", query: "4k tv", maxUsd: 500 } as any, { searchProducts: async () =>
+  [listing("TCL 55\" 4K QLED", 299), listing("TCL 55\" 4K QLED ", 305), listing("Hisense 55\" U6 Mini-LED", 379), listing("Sony Bravia 3 55\"", 449)] });
+assert.deepEqual(sugg.map((x) => [x.title.trim(), x.priceUsd]), [["TCL 55\" 4K QLED", 299], ["Hisense 55\" U6 Mini-LED", 379], ["Sony Bravia 3 55\"", 449]]); // duplicate listing folded
+assert.deepEqual(await suggestModels({ title: "x", category: "Hobby", autoUsd: 400, deadline: "", query: "x", maxUsd: 500 } as any, { searchProducts: async () => [] }), []);
 const okDraft = { title: "TV", category: "Hobby", autoUsd: 400, maxUsd: 500, deadline: new Date(Date.now() + 86_400_000).toISOString() };
 assert.equal(draftProblem(okDraft), undefined);
 assert.match(draftProblem({ ...okDraft, autoUsd: 600 })!, /can't be above/);

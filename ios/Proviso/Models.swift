@@ -165,6 +165,19 @@ struct RequestDraft: Codable, Hashable {
 struct ChatReply: Codable {
     var reply: String
     var draft: RequestDraft?
+    /// Set when the message named a kind of product ("a 4K TV"): concrete models from live listings to pick from.
+    var suggestions: [ModelSuggestion]? = nil
+}
+
+/// One concrete model the agent proposes for a vague request, with its live price.
+struct ModelSuggestion: Codable, Hashable, Identifiable {
+    var title: String
+    var query: String
+    var priceUsd: Double
+    var store: String
+    var image: String?
+    var why: String
+    var id: String { title }
 }
 
 struct Approval: Codable, Identifiable, Hashable {
