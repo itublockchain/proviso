@@ -24,6 +24,10 @@ struct RequestDetailView: View {
                     }
                     priceSection
                     PolicyBar(request: current)
+                    if let offers = current.offers, !offers.isEmpty {
+                        StoresSection(offers: offers)
+                            .id("stores")
+                    }
                     PriceHistoryChart(request: current)
                     if let strategy = current.strategy {
                         StrategySection(strategy: strategy)
@@ -36,9 +40,13 @@ struct RequestDetailView: View {
             }
             // QA-only: jump straight to the order's timeline for scripted screenshots.
             .task {
-                guard ProcessInfo.processInfo.arguments.contains("-uiTestScrollOrderBottom") else { return }
+                let args = ProcessInfo.processInfo.arguments
+                guard args.contains("-uiTestScrollOrderBottom") || args.contains("-uiTestScrollStores") else { return }
                 try? await Task.sleep(for: .milliseconds(400))
-                withAnimation { proxy.scrollTo("order", anchor: .bottom) }
+                withAnimation {
+                    if args.contains("-uiTestScrollStores") { proxy.scrollTo("stores", anchor: .bottom) }
+                    else { proxy.scrollTo("order", anchor: .bottom) }
+                }
             }
         }
         .background(Theme.background)
@@ -81,6 +89,8 @@ struct RequestDetailView: View {
                 try await store.demo(requestId: request.id, scenario: scenario)
             } catch APIError.server("not_watching") {
                 demoError = "Already bought or waiting on you. Reset the request first."
+            } catch APIError.server("no_listing") {
+                demoError = "No live store listing to re-check for this request."
             } catch {
                 demoError = error.localizedDescription
             }
@@ -123,6 +133,11 @@ struct RequestDetailView: View {
                 .onLongPressGesture(minimumDuration: 0.8) { showDemoMenu = true }
             if let target = current.targetPrice {
                 deltaLine(target: target)
+            }
+            if let list = current.listPrice, list > current.currentPrice {
+                Text("List \(list.usd) · \(Int(((1 - current.currentPrice / list) * 100).rounded()))% below")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
     }
@@ -414,7 +429,7 @@ private struct PriceHistoryChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.spacingS) {
             HStack(alignment: .firstTextBaseline) {
-                SectionHeader(title: "Price History · 90d")
+                SectionHeader(title: request.historyModeled == true ? "Price History (modeled) · 90d" : "Price History · 90d")
                 Spacer()
                 if let selectedPoint {
                     Text("\(selectedPoint.price.usd) · \(selectedPoint.date.formatted(date: .abbreviated, time: .omitted))")
@@ -473,6 +488,12 @@ private struct PriceHistoryChart: View {
             }
             .frame(height: 180)
 
+            if request.historyModeled == true {
+                Text("Modeled around today's live price and past sale dates, not observed prices.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
             if !request.events.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(request.events) { event in
@@ -487,6 +508,70 @@ private struct PriceHistoryChart: View {
                 }
             }
         }
+    }
+}
+
+/// Live prices for this product at every store Hero compared (Monid: Google Shopping + Amazon), cheapest first.
+/// Tapping a row opens the store's listing; Hero never checks out there.
+private struct StoresSection: View {
+    let offers: [StoreOffer]
+    @State private var safariURL: URL?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.spacingS) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeader(title: "Compared \(offers.count) \(offers.count == 1 ? "store" : "stores")")
+                Spacer()
+                Text("live via Monid").font(.caption).foregroundStyle(Theme.textSecondary)
+            }
+            VStack(spacing: 0) {
+                ForEach(Array(offers.enumerated()), id: \.element.id) { index, offer in
+                    if index > 0 { HairlineDivider() }
+                    Button { safariURL = URL(string: offer.url) } label: { row(offer, cheapest: index == 0) }
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+        .sheet(item: $safariURL) { url in
+            SafariView(url: url)
+        }
+    }
+
+    private func row(_ offer: StoreOffer, cheapest: Bool) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(offer.store).font(.subheadline.weight(.medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(offer.source == "amazon" ? "Amazon" : "Google Shopping")
+                    if let rating = offer.rating {
+                        Text("★ \(String(format: "%.1f", rating))")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            if cheapest {
+                Text("CHEAPEST")
+                    .font(.caption2.weight(.semibold))
+                    .kerning(0.4)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Theme.accentGreen.opacity(0.16))
+                    .foregroundStyle(Theme.accentGreen)
+                    .clipShape(Capsule())
+            }
+            Text(offer.price.formatted(.currency(code: "USD").locale(Locale(identifier: "en_US"))))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Theme.textPrimary)
+            Image(systemName: "arrow.up.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the store's listing")
     }
 }
 

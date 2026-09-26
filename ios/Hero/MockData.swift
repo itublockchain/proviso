@@ -40,7 +40,7 @@ enum MockData {
         status: .watching,
         currentPrice: 439,
         targetPrice: 389,
-        merchant: "BestBuy",
+        merchant: "Best Buy",
         strategy: Strategy(
             summary: "Price is ~12% inflated right now. Waiting for the 11.11 sale window before buying.",
             bullets: [
@@ -59,8 +59,18 @@ enum MockData {
         ],
         activity: [
             ActivityEntry(date: daysAgo(3), text: "Policy written to ENS", txHash: "0x4f2a...9c31"),
+            ActivityEntry(date: daysAgo(3), text: "Compared 5 stores via Monid (Google Shopping + Amazon): best $439 at Best Buy", txHash: nil),
             ActivityEntry(date: daysAgo(1), text: "Agent checked price: $439, waiting", txHash: nil)
-        ]
+        ],
+        offers: [
+            StoreOffer(store: "Best Buy", price: 439, url: "https://www.bestbuy.com/site/searchpage.jsp?st=sony+bravia+55", rating: 4.6, source: "google_shopping"),
+            StoreOffer(store: "Walmart", price: 448, url: "https://www.walmart.com/search?q=sony+bravia+55", rating: 4.3, source: "google_shopping"),
+            StoreOffer(store: "Amazon", price: 459.99, url: "https://www.amazon.com/s?k=sony+bravia+55", rating: 4.5, source: "amazon"),
+            StoreOffer(store: "Target", price: 469.99, url: "https://www.target.com/s?searchTerm=sony+bravia+55", rating: nil, source: "google_shopping"),
+            StoreOffer(store: "Sony", price: 499.99, url: "https://electronics.sony.com/search?q=bravia+55", rating: 4.8, source: "google_shopping")
+        ],
+        listPrice: 529.99,
+        historyModeled: true
     )
 
     static let ps5 = HeroRequest(
@@ -94,7 +104,15 @@ enum MockData {
         activity: [
             ActivityEntry(date: daysAgo(5), text: "Policy written to ENS", txHash: "0x9ab1...11ef"),
             ActivityEntry(date: daysAgo(0), text: "Order held pending approval", txHash: "0x71cd...aa02")
-        ]
+        ],
+        offers: [
+            StoreOffer(store: "Amazon", price: 449, url: "https://www.amazon.com/s?k=playstation+5+slim", rating: 4.7, source: "amazon"),
+            StoreOffer(store: "Walmart", price: 459, url: "https://www.walmart.com/search?q=playstation+5+slim", rating: 4.3, source: "google_shopping"),
+            StoreOffer(store: "Best Buy", price: 469.99, url: "https://www.bestbuy.com/site/searchpage.jsp?st=playstation+5+slim", rating: 4.6, source: "google_shopping"),
+            StoreOffer(store: "GameStop", price: 479.99, url: "https://www.gamestop.com/search/?q=playstation+5+slim", rating: nil, source: "google_shopping")
+        ],
+        listPrice: 499.99,
+        historyModeled: true
     )
 
     static let lego = HeroRequest(
@@ -155,7 +173,14 @@ enum MockData {
                 OrderStep(status: "delivered", label: "Delivered", at: daysAgo(10), done: true)
             ],
             signature: "0xsig0000000000000000000000000000000000000000000000000000000000d00d"
-        )
+        ),
+        offers: [
+            StoreOffer(store: "LEGO", price: 609, url: "https://www.lego.com/en-us/search?q=millennium+falcon", rating: 4.8, source: "google_shopping"),
+            StoreOffer(store: "Walmart", price: 629.99, url: "https://www.walmart.com/search?q=lego+millennium+falcon", rating: 4.3, source: "google_shopping"),
+            StoreOffer(store: "Amazon", price: 649.99, url: "https://www.amazon.com/s?k=lego+millennium+falcon", rating: 4.8, source: "amazon")
+        ],
+        listPrice: 699.99,
+        historyModeled: true
     )
 
     static let switch2 = HeroRequest(
@@ -419,7 +444,11 @@ actor MockAPI: API {
         func log(_ text: String, blocked: Bool? = nil, tx: String? = nil) {
             r.activity.append(ActivityEntry(date: now, text: text, txHash: tx, blocked: blocked))
         }
-        if scenario == .reset {
+        if scenario == .recheck {
+            guard r.status == .watching else { throw APIError.server("not_watching") }
+            guard let offers = r.offers, let best = offers.first else { throw APIError.server("no_listing") }
+            log("Re-checked \(offers.count) stores via Monid: best \(best.price.usd) at \(best.store)")
+        } else if scenario == .reset {
             approvals.removeAll { $0.requestId == requestId && ($0.status == .pending || $0.status == .approved) }
             r.status = .watching
             r.boughtAt = nil
@@ -485,7 +514,7 @@ actor MockAPI: API {
             case .attack:
                 r.strategy?.summary = "A checkout tried to redirect the payment. The contract refused it; still watching."
                 log("Prompt-injected checkout tried to pay 0x…bad1 — blocked by the contract (UnverifiedMerchant), rejected before sending", blocked: true)
-            case .reset:
+            case .reset, .recheck:
                 break
             }
         }
@@ -531,7 +560,7 @@ actor MockAPI: API {
         case .auto, .attack:
             let p = max(under(min(current, auto * 0.95)), c(auto / 2))
             return p > 0 && p <= auto ? p : nil
-        case .reset:
+        case .reset, .recheck:
             return nil
         }
     }

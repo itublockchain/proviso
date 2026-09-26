@@ -51,7 +51,7 @@ struct ActivityEntry: Codable, Identifiable, Hashable {
 
 /// POST api/requests/{id}/demo — hidden stage controls that move the price into a chosen band.
 enum DemoScenario: String, Codable, CaseIterable {
-    case auto, approval, blocked, attack, reset
+    case auto, approval, blocked, attack, recheck, reset
 
     var title: String {
         switch self {
@@ -59,6 +59,7 @@ enum DemoScenario: String, Codable, CaseIterable {
         case .approval: return "Price in approval range — ask me"
         case .blocked: return "Price above max — should block"
         case .attack: return "Attack: swap merchant address"
+        case .recheck: return "Re-check prices at every store (Monid)"
         case .reset: return "Reset request"
         }
     }
@@ -92,6 +93,24 @@ struct HeroRequest: Codable, Identifiable, Hashable {
     var boughtAt: Date? = nil
     /// Post-payment fulfillment from Hero's simulated demo merchant, once bought.
     var order: MerchantOrder? = nil
+    /// Live prices for the chosen product at up to 5 stores (Monid: Google Shopping + Amazon), cheapest first.
+    var offers: [StoreOffer]? = nil
+    /// The store's "usually" price, or the dearest compared store: for "X% below list".
+    var listPrice: Double? = nil
+    /// True when `priceHistory` is synthetic (seeded around the live price), not observed.
+    var historyModeled: Bool? = nil
+}
+
+/// One store's live price for the request's product (`HeroRequest.offers`).
+struct StoreOffer: Codable, Hashable, Identifiable {
+    var store: String
+    var price: Double
+    var url: String
+    var image: String? = nil
+    var rating: Double? = nil
+    /// "google_shopping" | "amazon"
+    var source: String
+    var id: String { "\(store)-\(url)" }
 }
 
 /// One step of a merchant order's fulfillment timeline (paid/confirmed/shipped/delivered).
