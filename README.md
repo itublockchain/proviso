@@ -48,10 +48,11 @@ Hero moves the guarantees on-chain:
 
 ### ENSv2 is the policy layer
 
-- **Hierarchy = policy scope.** `herodemo.eth` → category subregistries (`hobby`, `needs`) → one subname per request. The contract derives the category from the request name and applies one shared monthly budget to every request under it.
+- **Hierarchy = policy scope.** `herodemo.eth` → category subregistries (`hobby`, `needs`) → one registered subname per request. A user with their own wallet gets the same tree under `<handle>.herodemo.eth`: after onboarding (older accounts: on their first request) Hero deploys its subregistry and the `hobby`/`needs` subregistries, off the onboarding path, and the user's wallet owns the category and request names. The contract derives the category from the request name and applies one shared monthly budget to every request under it.
 - **Records = rules.** Numbers are stored as `data` records (`abi.encode(uint256)`) on a `PermissionedResolver` and read on-chain with `resolve(name, data(...))`. Missing record → 0 → the check fails closed.
 - **Enhanced Access Control = what the agent may touch.** The agent holds a setter role for the `status` text record only. It can report "bought", it cannot raise `max` or `limit` (tested on a Sepolia fork against the deployed ENSv2 resolver code).
-- **Subname expiry = request deadline**, plus a `deadline` record the contract enforces (expired ENSv2 subnames still resolve, so the contract does not rely on expiry alone).
+- **Subname expiry = request deadline.** Each request name is registered in its category's subregistry with expiry = deadline (owner = the payer, resolver = the payer's resolver), plus a `deadline` record the contract enforces (the contract reads the resolver directly, so it does not rely on expiry alone).
+- **Readable in any ENS tool.** The contract reads only `data` records; Hero mirrors them as text records so ENS tools show the policy (explorer.ens.dev displays the `description`; every key resolves through the Universal Resolver): `auto`, `max`, `deadline`, `description` on each request, `limit` and `description` on each category, `description`/`url`/`avatar` on `herodemo.eth` and `hero-verified.eth`. User resolvers grant the operator only those four request text keys (resolvers created before this grant keep data records only).
 - **Budgets reset without transactions.** Spending is keyed by 30-day period; a new period is a new counter. `pct` caps a category at a share of the current USDC balance, so a salary deposit raises the cap with no policy rewrite.
 - **Merchants are an ENS registry too.** `hero-verified.eth` holds `data[<merchant address>] = 1`. Auto-band purchases only go to addresses listed there.
 
