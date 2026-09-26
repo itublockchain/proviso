@@ -284,7 +284,7 @@ assert.ok(dr.body.currentPrice <= 100);
 const ord = dr.body.order;
 assert.match(ord.id, /^PV-[0-9A-F]{8}$/);
 assert.deepEqual([ord.status, ord.simulated, ord.merchantName, ord.registry, ord.merchantVerified, ord.humanApproved, ord.priceUsd, ord.txHash],
-  ["paid", true, "Proviso Demo Merchant", "hero-verified.eth", false, false, dr.body.currentPrice, undefined]); // no chain: nothing verified, no tx
+  ["paid", true, "Proviso Demo Merchant", "verified.proviso.eth", false, false, dr.body.currentPrice, undefined]); // no chain: nothing verified, no tx
 assert.equal(ord.merchantAddress, MERCHANT);
 assert.equal(ord.id, `PV-${ord.orderHash.slice(2, 10).toUpperCase()}`);
 assert.match(ord.paidAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/); // iso, no millis

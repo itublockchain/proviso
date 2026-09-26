@@ -1,7 +1,8 @@
 {
   "chainId": 11155111,
-  "PolicySpender": "0x1F478b128b388486a20785b107Af7daD769685B8",
+  "PolicySpender": "0x610803741c922384bcA07e40be3836E3191A9Fa6",
   "PolicySpender admin (resetFor)": "0x73B30b7150D6cFf3EC35EF25a65E4b8625Cf4435",
+  "PolicySpender v3 (superseded, merchant registry hero-verified.eth)": "0x1F478b128b388486a20785b107Af7daD769685B8",
   "PolicySpender v2 (superseded, setupWithPermit without reset)": "0x4821452b64d70258c11acc2722c29fE934f0aB45",
   "PolicySpender v1 (superseded)": "0x3dC4501cE0d266925F8de06ee3a8c0515125f197",
   "USDC (MockUSDC, open mint)": "0x16f95d91dba7da3aca778ec053df0ff6c6a8aa8e",
@@ -18,11 +19,12 @@
     "resolver": "0x6D200830Fc9dfCc4Dd55B6c80CDE55f35Cc90856",
     "hobbyRegistry": "0xD7325ec358799084D21Cc41dd1a6842B3F866b0D",
     "needsRegistry": "0x4aE88C7E05C9bd775d1f86B8B0275f4C78666218",
-    "merchantRegistry": "hero-verified.eth",
+    "merchantRegistry": "verified.proviso.eth",
     "merchantResolver": "0x00b83ADcB46f2510B68CFf750105EACF605503F0",
     "superseded root": {
       "root": "herodemo.eth",
       "rootRegistry": "0x9817e00c0ac5478c60D7Bd0A6E55aee939d11aFa"
-    }
+    },
+    "agentName": "agent.proviso.eth"
   }
 }

@@ -76,13 +76,22 @@ type Account = {
   tokenHash?: string; tokenExp?: number; provisioned?: boolean; ready?: boolean;
   permit?: Hex; txs?: Hex[]; // the user's one setup signature (USDC permit) and Hero's provisioning tx hashes
   setupNonce?: string; // in the resolver's CREATE2 salt: after a reset the same wallet + handle get a fresh resolver
+  spender?: Hex; // the PolicySpender this wallet was set up on
 };
 const DEFAULT_LIMITS = { Hobby: 1000, Needs: 3000 };
 const ACCOUNTS_FILE = stateFile(".accounts.json");
 const accounts = new Map<string, Account>(Object.entries(load(ACCOUNTS_FILE) ?? {}));
 const saveAccounts = () => writeFileSync(ACCOUNTS_FILE, JSON.stringify(Object.fromEntries(accounts)), { mode: 0o600 });
-for (const a of accounts.values()) if (!a.root.endsWith(`.${ROOT}`)) { // set up under an older root: one new signature under ROOT
-  if (a.mode === "wallet") Object.assign(a, { mode: "none", wallet: undefined, resolver: undefined, permit: undefined, txs: undefined, provisioned: undefined, ready: undefined, setupNonce: undefined });
+/** Wallets set up under an older root or on an older PolicySpender set up again (one signature); their old username is freed. */
+const staleNames: { handle: string; resolver?: Hex }[] = [], staleAccts = new Set<string>();
+for (const a of accounts.values()) {
+  const oldSpender = a.mode === "wallet" && a.spender?.toLowerCase() !== process.env.POLICY_SPENDER?.toLowerCase();
+  if (a.root.endsWith(`.${ROOT}`) && !oldSpender) continue;
+  if (a.mode === "wallet") {
+    if (a.root.endsWith(`.${ROOT}`)) staleNames.push({ handle: a.handle, resolver: a.resolver });
+    staleAccts.add(a.key); // its requests live on the old resolver: dropped in loadState
+    Object.assign(a, { mode: "none", wallet: undefined, resolver: undefined, permit: undefined, txs: undefined, provisioned: undefined, ready: undefined, setupNonce: undefined, spender: undefined });
+  }
   a.root = `${a.handle}.${ROOT}`;
 }
 
@@ -145,7 +154,7 @@ export function saveState() {
 export function loadState() {
   requests.clear(); approvals.clear(); orders.clear();
   const s = load(STATE_FILE);
-  for (const r of s?.requests ?? []) if (r.ensName.endsWith(`.${ROOT}`)) requests.set(r.id, r); // older roots can't be bought any more
+  for (const r of s?.requests ?? []) if (r.ensName.endsWith(`.${ROOT}`) && !staleAccts.has(r.acct)) requests.set(r.id, r); // older roots/setups can't be bought any more
   for (const r of requests.values()) if (r.preparing) { // its setup died with the previous process
     r.setupError = `Setup was interrupted at "${r.preparing}" by a backend restart. Create the request again.`;
     r.preparing = undefined;
@@ -658,6 +667,7 @@ async function doProvision(a: Account) {
   const [f, o] = await Promise.all([FACTORY, OPERATOR!].map((x) => pub.readContract({ address: res, abi: ENS_ABI, functionName: "roles", args: [0n, x] })));
   if (f !== 0n || o !== 0n) throw new Error(`resolver ${res}: Proviso holds root roles (factory ${f}, operator ${o})`);
   a.provisioned = true;
+  a.spender = CHAIN.spender;
   saveAccounts();
   void tree(a).catch((e) => console.error("tree", a.root, e?.shortMessage ?? e?.message ?? e)); // for request names, off the onboarding path
 }
@@ -792,7 +802,7 @@ function orderView(o: MerchantOrder) {
   const steps = timeline(o.paidAt);
   return {
     id: o.id, status: steps.filter((s) => s.done).at(-1)!.status, simulated: true, merchantName: MERCHANT_NAME, merchantAddress: o.merchantAddress,
-    registry: "hero-verified.eth", merchantVerified: o.merchantVerified, title: o.title, imageUrl: o.imageUrl, priceUsd: o.priceUsd,
+    registry: `verified.${ROOT}`, merchantVerified: o.merchantVerified, title: o.title, imageUrl: o.imageUrl, priceUsd: o.priceUsd,
     listPriceUsd: o.listPriceUsd, store: o.store, storeUrl: o.storeUrl, txHash: o.txHash, orderHash: o.orderHash, payer: o.payer,
     humanApproved: o.humanApproved, paidAt: iso(o.paidAt), timeline: steps, signature: o.signature, typedData: o.typedData,
   };
@@ -1088,6 +1098,10 @@ async function setupRequest(r: Req, deps: Deps) {
 }
 
 export function mountHero(app: Express, deps: Deps) {
+  // usernames of wallets that must set up again: freed so the same handle can be registered with the new setup
+  if (walletChain()) for (const n of staleNames) void pub.readContract({ address: ROOT_REGISTRY, abi: ENS_ABI, functionName: "getResolver", args: [n.handle] })
+    .then((res): Promise<Hex | undefined> | undefined => (n.resolver && same(res, n.resolver) ? send(ENS.ownerKey!, ROOT_REGISTRY, ENS_ABI, "unregister", [BigInt(keccak256(stringToBytes(n.handle)))]) : undefined))
+    .then((h) => h && console.log("freed", `${n.handle}.${ROOT}`, h), (e) => console.error("free name", n.handle, e?.shortMessage ?? e));
   setInterval(publishStatuses, 5000).unref(); // ponytail: 5 s sweep, not per-transition hooks; one line per change, never per price tick
   // Sign in with World ID (authorization code + PKCE). Every World ID gets its own account.
   const redirectUri = () => `${(process.env.PUBLIC_URL ?? "").replace(/\/$/, "")}/auth/world/callback`; // exact registered callback
@@ -1162,6 +1176,7 @@ export function mountHero(app: Express, deps: Deps) {
       }
     }
     a.mode = "wallet";
+    a.spender = CHAIN.spender; // set up on this contract (a later contract means one new signature)
     saveAccounts();
     try {
       const td = await permitTypedData(a);

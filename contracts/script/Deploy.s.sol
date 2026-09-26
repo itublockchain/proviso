@@ -6,7 +6,7 @@ import {PolicySpender, IERC20, IWorldID, IResolver} from "../src/PolicySpender.s
 import {dnsEncode} from "./SetupEns.s.sol";
 
 /// forge script script/Deploy.s.sol --rpc-url sepolia --broadcast
-/// Env: OPERATOR_PK, WORLD_APP_ID, MERCHANT_RESOLVER, MERCHANT_REGISTRY (e.g. "heromerchants.eth")
+/// Env: OPERATOR_PK, WORLD_APP_ID, MERCHANT_RESOLVER, MERCHANT_REGISTRY (e.g. "verified.proviso.eth")
 ///      optional: USDC, WORLD_ROUTER, WORLD_ACTION, HERO_ATTESTER (backend key that signs World ID for Agents approvals)
 /// admin (resetFor) = the operator/deployer.
 contract Deploy is Script {
