@@ -12,7 +12,7 @@ struct NewRequestComposerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var messages: [ChatMessage] = [
-        ChatMessage(role: .agent, text: "What do you want to buy? Describe it naturally, e.g. \"Sony 55\\\" TV, must arrive within 1 month, never above $500, buy on your own under $400.\"")
+        ChatMessage(role: .agent, text: "What do you want to buy? Describe it naturally, e.g. “Sony 55-inch TV, must arrive within 1 month, never above $500, buy on your own under $400.”")
     ]
     @State private var input = ""
     @State private var draft: RequestDraft?

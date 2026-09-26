@@ -3,7 +3,6 @@ import SwiftUI
 struct RequestsListView: View {
     @Environment(Store.self) private var store
     @State private var searchText = ""
-    @State private var showingComposer = false
 
     private var filtered: [HeroRequest] {
         guard !searchText.isEmpty else { return store.requests }
@@ -20,14 +19,14 @@ struct RequestsListView: View {
                     ContentUnavailableView(
                         "No requests yet",
                         systemImage: "cart",
-                        description: Text("Ask Hero to buy something below.")
+                        description: Text("Tap + to tell Hero what to buy.")
                     )
                 } else {
                     List {
                         ForEach(filtered) { request in
-                            NavigationLink(value: request.id) {
-                                RequestRow(request: request)
-                            }
+                            // Hidden link: whole card is tappable, no disclosure chevron.
+                            RequestRow(request: request)
+                                .background(NavigationLink(value: request.id) { EmptyView() }.opacity(0))
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Theme.background)
@@ -56,52 +55,8 @@ struct RequestsListView: View {
                     RequestDetailView(request: request)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                ComposerEntryBar { showingComposer = true }
-            }
             .refreshable { await store.loadAll() }
-            .sheet(isPresented: $showingComposer) {
-                NewRequestComposerView()
-            }
         }
-    }
-}
-
-/// ChatGPT-style "Ask anything" entry point that opens the request composer.
-private struct ComposerEntryBar: View {
-    let action: () -> Void
-    @State private var pressed = false
-
-    var body: some View {
-        Button {
-            pressed.toggle()
-            action()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(Theme.accentBlue)
-                Text("Ask Hero to buy something…")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(Theme.accentBlue)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Theme.border, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .sensoryFeedback(.impact(weight: .light), trigger: pressed)
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .background(.bar)
     }
 }
 
@@ -141,6 +96,7 @@ private struct RequestRow: View {
             }
         }
         .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
         .overlay(

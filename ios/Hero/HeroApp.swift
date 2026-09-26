@@ -16,6 +16,7 @@ struct HeroApp: App {
 
 struct RootTabView: View {
     @Environment(Store.self) private var store
+    private static let composeTab = 99
 
     var body: some View {
         @Bindable var store = store
@@ -32,7 +33,19 @@ struct RootTabView: View {
             Tab("Settings", systemImage: "gearshape", value: 3) {
                 SettingsView()
             }
+            // The search role puts this tab in its own circle at the trailing end of the tab bar.
+            Tab("New request", systemImage: "plus", value: Self.composeTab, role: .search) {
+                Color.clear
+            }
         }
         .tint(Theme.accentBlue)
+        .onChange(of: store.selectedTab) { old, new in
+            guard new == Self.composeTab else { return }
+            store.selectedTab = old
+            store.showingComposer = true
+        }
+        .sheet(isPresented: $store.showingComposer) {
+            NewRequestComposerView()
+        }
     }
 }

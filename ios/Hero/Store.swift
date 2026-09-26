@@ -19,6 +19,7 @@ final class Store {
     var isLoading = false
     var errorMessage: String?
     var selectedTab = 0
+    var showingComposer = false
     var approvalsPath: [String] = []
 
     private var mockAPI = MockAPI()
