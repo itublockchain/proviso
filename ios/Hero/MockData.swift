@@ -148,7 +148,7 @@ enum MockData {
             ActivityEntry(date: daysAgo(12), text: "USDC transferred to merchant", txHash: "0xf00d...cafe")
         ],
         order: MerchantOrder(
-            id: "HD-1A2B3C4D",
+            id: "PV-1A2B3C4D",
             status: "delivered",
             simulated: true,
             merchantName: "Proviso Demo Merchant",
@@ -472,7 +472,7 @@ actor MockAPI: API {
                 r.strategy?.summary = "Price dropped into your auto band, so I bought it on my own."
                 let txHash = "0xdemo...\(UUID().uuidString.prefix(6))"
                 log("Bought for \(price.usd) (auto band)", tx: txHash)
-                let orderId = "HD-\(UUID().uuidString.prefix(8).uppercased())"
+                let orderId = "PV-\(UUID().uuidString.prefix(8).uppercased())"
                 r.order = MerchantOrder(
                     id: orderId,
                     status: "paid",

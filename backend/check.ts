@@ -282,11 +282,11 @@ assert.equal(dr.body.status, "bought");
 assert.ok(dr.body.currentPrice <= 100);
 // Proviso Demo Merchant: a simulated order with a real EIP-712 receipt signed by the merchant key
 const ord = dr.body.order;
-assert.match(ord.id, /^HD-[0-9A-F]{8}$/);
+assert.match(ord.id, /^PV-[0-9A-F]{8}$/);
 assert.deepEqual([ord.status, ord.simulated, ord.merchantName, ord.registry, ord.merchantVerified, ord.humanApproved, ord.priceUsd, ord.txHash],
   ["paid", true, "Proviso Demo Merchant", "hero-verified.eth", false, false, dr.body.currentPrice, undefined]); // no chain: nothing verified, no tx
 assert.equal(ord.merchantAddress, MERCHANT);
-assert.equal(ord.id, `HD-${ord.orderHash.slice(2, 10).toUpperCase()}`);
+assert.equal(ord.id, `PV-${ord.orderHash.slice(2, 10).toUpperCase()}`);
 assert.match(ord.paidAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/); // iso, no millis
 assert.deepEqual(ord.timeline.map((t: any) => [t.status, t.done]), [["paid", true], ["confirmed", false], ["shipped", false], ["delivered", false]]);
 const td = ord.typedData;
@@ -300,7 +300,7 @@ assert.equal(last(dr.body).text, `Order ${ord.id} confirmed by Proviso Demo Merc
 assert.equal(dr.body.activity.filter((a: any) => a.text.startsWith("Bought")).length, 1); // e2e-wallet.sh parses this line
 assert.deepEqual(await (await get(`/merchant/orders/${ord.id}`)).json(), ord); // public, no session
 assert.equal((await (await get("/merchant/orders")).json())[0].id, ord.id);
-assert.equal((await get("/merchant/orders/HD-00000000")).status, 404);
+assert.equal((await get("/merchant/orders/PV-00000000")).status, 404);
 // demo clock: paid 0 s, confirmed 5 s, shipped 20 s, delivered 45 s
 const t0 = Date.UTC(2026, 8, 27, 0, 0, 0);
 const at = (ms: number) => timeline(t0, t0 + ms).filter((t) => t.done).at(-1)!.status;

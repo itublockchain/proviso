@@ -47,7 +47,7 @@ type Req = Draft & {
   id: string; imageUrl?: string; ensName: string; status: "watching" | "readyToBuy" | "needsApproval" | "bought" | "expired";
   currentPrice: number; targetPrice?: number; merchant?: string; offer?: Offer; boughtAt?: number; boughtPrice?: number;
   offers?: StoreOffer[]; storesCompared?: number; listPrice?: number; historyModeled?: boolean; // live store comparison (Monid, top 5 kept); the 90-day history is modeled
-  orderId?: string; // the merchant order (HD-…) of the current purchase
+  orderId?: string; // the merchant order (PV-…) of the current purchase
   strategy?: { summary: string; bullets: string[]; buyBy: string; confidence: number };
   priceHistory: { date: string; price: number }[]; events: { date: string; name: string }[];
   activity: { date: string; text: string; txHash?: string; blocked?: boolean }[]; // blocked: a policy/contract rejection
@@ -705,7 +705,7 @@ async function fulfil(r: Req, order: ReturnType<typeof makeOrder>, txHash: Hex |
     human = log.args.human;
     merchantVerified = verified;
   }
-  const id = `HD-${hash.slice(2, 10).toUpperCase()}`;
+  const id = `PV-${hash.slice(2, 10).toUpperCase()}`;
   const paidAt = r.boughtAt ?? Date.now();
   const store = r.merchant ?? MERCHANT_NAME;
   const message = {
