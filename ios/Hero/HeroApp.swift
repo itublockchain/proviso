@@ -8,8 +8,25 @@ struct HeroApp: App {
         WindowGroup {
             RootView()
                 .environment(store)
-                .task { await store.loadSession() }
+                .task {
+                    await store.loadSession()
+                    await runUITestHooks()
+                }
                 .onOpenURL { store.handleDeepLink($0) }
+        }
+    }
+
+    /// QA-only launch-argument seam so simulator screenshots can be scripted without a real tap
+    /// (accessibility/UI automation isn't available in the build sandbox). No-op in normal runs.
+    private func runUITestHooks() async {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-uiTestDemo") {
+            await store.signInWithDemo()
+            try? await store.useDemoWallet()
+        }
+        if let idx = args.firstIndex(of: "-uiTestOpenRequest"), idx + 1 < args.count,
+           let url = URL(string: "hero://request/\(args[idx + 1])") {
+            store.handleDeepLink(url)
         }
     }
 }

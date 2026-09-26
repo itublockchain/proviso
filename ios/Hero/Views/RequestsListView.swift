@@ -13,7 +13,8 @@ struct RequestsListView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        @Bindable var store = store
+        NavigationStack(path: $store.requestsPath) {
             VStack(spacing: 0) {
                 if !store.requests.isEmpty {
                     RequestsSummaryHeader(requests: store.requests, spentThisMonth: spentThisMonth, ordersOnly: $ordersOnly)

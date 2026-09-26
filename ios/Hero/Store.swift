@@ -27,6 +27,7 @@ final class Store {
     var selectedTab = 0
     var showingComposer = false
     var approvalsPath: [String] = []
+    var requestsPath: [String] = []
 
     /// Mandatory Sign in with World ID: `nil` while the session is still being checked at launch.
     var me: Me?
@@ -186,6 +187,7 @@ final class Store {
 
     /// hero://approval/<orderId> — World App's `return_to` lands here after the user approves.
     /// hero://wallet?ok=1 — the MetaMask-hosted setup page's best-effort return after wallet setup.
+    /// hero://request/<id> — jumps straight to a request's detail (used for QA/demo deep links).
     func handleDeepLink(_ url: URL) {
         guard url.scheme == "hero" else { return }
         switch url.host() {
@@ -194,6 +196,9 @@ final class Store {
             showApproval(url.lastPathComponent)
         case "wallet":
             Task { await loadSession() }
+        case "request":
+            guard !url.lastPathComponent.isEmpty, url.lastPathComponent != "/" else { return }
+            showRequest(url.lastPathComponent)
         default:
             break
         }
@@ -203,6 +208,11 @@ final class Store {
         selectedTab = 1
         if approvalsPath.last != orderId { approvalsPath = [orderId] }
         Task { await refreshApproval(orderId: orderId) }
+    }
+
+    private func showRequest(_ id: String) {
+        selectedTab = 0
+        if requestsPath.last != id { requestsPath = [id] }
     }
 
     /// Hidden stage controls: moves the price into a band (or resets), then shows the result —

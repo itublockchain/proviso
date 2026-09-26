@@ -14,23 +14,32 @@ struct RequestDetailView: View {
     private var current: HeroRequest { store.request(id: request.id) ?? request }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.spacingXL) {
-                heroHeader
-                if let order = current.order {
-                    OrderSection(order: order, request: current)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.spacingXL) {
+                    heroHeader
+                    if let order = current.order {
+                        OrderSection(order: order, request: current)
+                            .id("order")
+                    }
+                    priceSection
+                    PolicyBar(request: current)
+                    PriceHistoryChart(request: current)
+                    if let strategy = current.strategy {
+                        StrategySection(strategy: strategy)
+                    }
+                    PolicySection(request: current)
+                    ActivityTimeline(activity: current.activity)
                 }
-                priceSection
-                PolicyBar(request: current)
-                PriceHistoryChart(request: current)
-                if let strategy = current.strategy {
-                    StrategySection(strategy: strategy)
-                }
-                PolicySection(request: current)
-                ActivityTimeline(activity: current.activity)
+                .padding(.horizontal, Theme.spacingM)
+                .padding(.vertical, Theme.spacingL)
             }
-            .padding(.horizontal, Theme.spacingM)
-            .padding(.vertical, Theme.spacingL)
+            // QA-only: jump straight to the order's timeline for scripted screenshots.
+            .task {
+                guard ProcessInfo.processInfo.arguments.contains("-uiTestScrollOrderBottom") else { return }
+                try? await Task.sleep(for: .milliseconds(400))
+                withAnimation { proxy.scrollTo("order", anchor: .bottom) }
+            }
         }
         .background(Theme.background)
         .navigationTitle(current.title)
