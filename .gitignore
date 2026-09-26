@@ -11,4 +11,5 @@ contracts/deployments/setup.json
 
 # xcode
 ios/build/
+ios/build-device/
 ios/**/xcuserdata/

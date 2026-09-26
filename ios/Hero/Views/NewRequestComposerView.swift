@@ -15,6 +15,7 @@ struct NewRequestComposerView: View {
         ChatMessage(role: .agent, text: "What do you want to buy? Describe it naturally, e.g. “Sony 55-inch TV, must arrive within 1 month, never above $500, buy on your own under $400.”")
     ]
     @State private var input = ""
+    @FocusState private var inputFocused: Bool
     @State private var draft: RequestDraft?
     @State private var isSending = false
     @State private var errorMessage: String?
@@ -47,24 +48,8 @@ struct NewRequestComposerView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                HStack(spacing: 10) {
-                    TextField("Describe your purchase request…", text: $input, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .padding(12)
-                        .background(Theme.secondaryBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    Button {
-                        send()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title)
-                            .foregroundStyle(input.isEmpty ? Theme.textSecondary : Theme.accentBlue)
-                    }
-                    .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty || isSending)
-                }
-                .padding(12)
-                .background(Theme.cardBackground)
             }
+            .safeAreaInset(edge: .bottom) { inputBar }
             .background(Theme.background)
             .navigationTitle("New Request")
             .navigationBarTitleDisplayMode(.inline)
@@ -79,6 +64,40 @@ struct NewRequestComposerView: View {
                 Text(errorMessage ?? "")
             })
         }
+    }
+
+    /// Liquid Glass capsule like Messages/Slack: text grows up to 5 lines, send appears as a prominent glass button.
+    private var inputBar: some View {
+        GlassEffectContainer(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Ask Hero to buy something…", text: $input, axis: .vertical)
+                    .lineLimit(1...5)
+                    .focused($inputFocused)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                if canSend {
+                    Button(action: send) {
+                        Image(systemName: "arrow.up")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .animation(.spring(duration: 0.3), value: canSend)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .sensoryFeedback(.impact(weight: .light), trigger: messages.count)
+    }
+
+    private var canSend: Bool {
+        !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSending
     }
 
     private func send() {
