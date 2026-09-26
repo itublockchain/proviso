@@ -48,6 +48,7 @@ contract ForkTest is Test {
         vm.setEnv("MERCHANT_LABEL", "provisoforkshops7");
         vm.setEnv("MERCHANT_REGISTRY", "provisoforkshops7.eth");
         vm.setEnv("WORLD_APP_ID", APP_ID);
+        vm.setEnv("USDC", vm.toString(USDC)); // real Sepolia USDC, whatever the shell exports (the backend .env uses MockUSDC)
         vm.setEnv("OWNER_NULLIFIER", vm.toString(HUMAN));
         vm.setEnv("PROVISO_ATTESTER", vm.toString(vm.addr(attesterPk)));
         vm.deal(alice, 1 ether);
