@@ -2,7 +2,7 @@
 
 **An AI shopping agent that spends from your own wallet — but only inside rules you wrote to ENS, and only with your fresh World ID approval when it matters.**
 
-You tell Hero what you want (“a Sony 55-inch TV, must arrive within a month, never above $500, buy it yourself under $400”). The agent studies the price history and the sale calendar, decides *when* to buy, and buys from your wallet. No deposit into an agent wallet, no blank cheque: a smart contract enforces your policy on every purchase.
+You tell Hero what you want (“a Sony 55-inch TV, must arrive within a month, never above $500, buy it yourself under $400”). The agent compares live prices across stores, studies the price history and the sale calendar, decides *when* to buy, and buys from your wallet. No deposit into an agent wallet, no blank cheque: a smart contract enforces your policy on every purchase.
 
 | Price the agent finds | What happens |
 |---|---|
@@ -29,8 +29,10 @@ Hero moves the guarantees on-chain:
  ────────────────                   ─────────────────────                     ────────────────
  Sign in with World ID ──OIDC──▶    World ID for Agents IdP  ── pairwise sub ─▶ setContinuity(owner, H(iss|sub))
  "Buy a TV, ≤$500, auto ≤$400" ──▶  Claude Haiku 4.5 (Bedrock) parses intent
-                                    Shopify catalog search, price history,
-                                    sale calendar → strategy
+                                    live listings via Monid (Google Shopping
+                                    + Amazon): every store's price for the
+                                    pick; modeled history, sale calendar
+                                    → strategy
                                     writes policy ─────────────────────────────▶ ENSv2: tv-xxxx.hobby.herodemo.eth
                                                                                    auto / max / deadline (data records)
                                     price drops into auto band ────────────────▶ PolicySpender.buy(order)
@@ -98,9 +100,10 @@ FOUNDRY_PROFILE=fork forge test                     # against a Sepolia fork (ne
 # backend
 cd backend && npm install && npm test
 node --env-file=.env --import tsx server.ts          # :8787
+npm run prewarm                                      # optional: cache the stage queries' listings (~$0.02 of Monid credit)
 ```
 
-Backend `.env` (never committed): `SEPOLIA_RPC_URL`, `POLICY_SPENDER`, `USDC`, `WALLET_ADDRESS`, `DEPLOYER_PRIVATE_KEY` (owner, demo only), `AGENT_PRIVATE_KEY`, `MERCHANT_ADDRESS`, `MERCHANT_PRIVATE_KEY` (Hero Demo Merchant, signs receipts), `ALICE_RESOLVER`, `HOBBY_REGISTRY`, `NEEDS_REGISTRY`, `ENS_ROOT`, `WORLD_OIDC_CLIENT_ID`, `WORLD_OIDC_CLIENT_SECRET`, `HERO_ATTESTER_PRIVATE_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`, `BEDROCK_MODEL_ID`, and the IDKit `WORLD_*` values.
+Backend `.env` (never committed): `SEPOLIA_RPC_URL`, `POLICY_SPENDER`, `USDC`, `WALLET_ADDRESS`, `DEPLOYER_PRIVATE_KEY` (owner, demo only), `AGENT_PRIVATE_KEY`, `MERCHANT_ADDRESS`, `MERCHANT_PRIVATE_KEY` (Hero Demo Merchant, signs receipts), `ALICE_RESOLVER`, `HOBBY_REGISTRY`, `NEEDS_REGISTRY`, `ENS_ROOT`, `WORLD_OIDC_CLIENT_ID`, `WORLD_OIDC_CLIENT_SECRET`, `HERO_ATTESTER_PRIVATE_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`, `BEDROCK_MODEL_ID`, `MONID_API_KEY` (product search), and the IDKit `WORLD_*` values.
 
 iOS: `cd ios && xcodegen generate && open Hero.xcodeproj`. Settings → turn off demo mode and point the backend URL at your server.
 
@@ -110,4 +113,4 @@ iOS: `cd ios && xcodegen generate && open Hero.xcodeproj`. Settings → turn off
 - **Single owner per deployment of the backend**, and the backend holds the demo owner key to write ENS records. In a real app the owner signs those writes in their wallet.
 - **Testnet everything:** Sepolia, MockUSDC, World ID sandbox (mocked proofs), IDKit staging.
 
-**What's real, what's simulated.** Real: the products and their current prices (live Shopify catalog), the ENS policy records, the World ID sign-in and approvals, and the payment itself: `PolicySpender` pulls MockUSDC from the owner's wallet to the merchant address listed in `hero-verified.eth` on Sepolia. Simulated: the price history (synthetic, seeded around the live price with dips on past sale dates) and the merchant. Hero does not check out at the Shopify store. The verified merchant address belongs to **Hero Demo Merchant**, whose key the backend holds. After each buy it reads the transaction receipt and requires a `PolicySpender` `Bought` event for this exact order hash (which binds the Shopify SKU), paying the merchant the exact amount. It then checks `verifiedMerchant` on-chain and signs an EIP-712 `Receipt` (order number, order and tx hashes, payer, payee, amount, item, store, `humanApproved`, paid-at). Every order is public at `GET /merchant/orders/:id` with that signature and its typed data, so anyone can recover the signer and compare it with the registry. The order shows the price paid on-chain next to the Shopify list price; they differ when the demo controls move the watched price. Confirmation, shipping and delivery run on a demo clock that compresses 7 days into 45 seconds (confirmed at 5 s, shipped at 20 s, delivered at 45 s), and every order is labelled `simulated`.
+**What's real, what's simulated.** Real: the products and their current prices (live listings via Monid: Google Shopping + Amazon, then every store's price for the chosen product, with direct listing links; cached for 6 hours and re-checked only on demand), the ENS policy records, the World ID sign-in and approvals, and the payment itself: `PolicySpender` pulls MockUSDC from the owner's wallet to the merchant address listed in `hero-verified.eth` on Sepolia. Simulated: the price history (synthetic, seeded around the live price with dips on past sale dates; the app labels it "modeled") and the merchant. Hero does not check out at the store (Best Buy, Walmart, …); the store row only opens its listing. The verified merchant address belongs to **Hero Demo Merchant**, whose key the backend holds. After each buy it reads the transaction receipt and requires a `PolicySpender` `Bought` event for this exact order hash (which binds the listing's SKU), paying the merchant the exact amount. It then checks `verifiedMerchant` on-chain and signs an EIP-712 `Receipt` (order number, order and tx hashes, payer, payee, amount, item, store, `humanApproved`, paid-at). Every order is public at `GET /merchant/orders/:id` with that signature and its typed data, so anyone can recover the signer and compare it with the registry. The order shows the price paid on-chain next to the store's listed price; they differ when the demo controls move the watched price. Confirmation, shipping and delivery run on a demo clock that compresses 7 days into 45 seconds (confirmed at 5 s, shipped at 20 s, delivered at 45 s), and every order is labelled `simulated`.
