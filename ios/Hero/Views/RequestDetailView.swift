@@ -18,17 +18,20 @@ struct RequestDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.spacingXL) {
                     heroHeader
+                    if current.preparing != nil || current.setupError != nil {
+                        SetupCard(request: current)
+                    }
                     if let order = current.order {
                         OrderSection(order: order, request: current)
                             .id("order")
                     }
-                    priceSection
+                    if current.preparing == nil { priceSection } // no live price yet while stores are compared
                     PolicyBar(request: current)
                     if let offers = current.offers, !offers.isEmpty {
                         StoresSection(offers: offers)
                             .id("stores")
                     }
-                    PriceHistoryChart(request: current)
+                    if !current.priceHistory.isEmpty { PriceHistoryChart(request: current) }
                     if let strategy = current.strategy {
                         StrategySection(strategy: strategy)
                     }
@@ -52,13 +55,14 @@ struct RequestDetailView: View {
         .background(Theme.background)
         .navigationTitle(current.title)
         .navigationBarTitleDisplayMode(.inline)
-        // Live order fulfillment: poll while the screen is visible and not yet delivered.
+        // Poll while the screen is visible and something is still moving: the background setup, or the order until delivered.
         .task(id: request.id) {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(current.preparing != nil ? 1.5 : 3))
                 if Task.isCancelled { return }
                 await store.refreshRequest(id: request.id)
-                if current.order == nil || current.order?.status == "delivered" { return }
+                let orderMoving = current.order != nil && current.order?.status != "delivered"
+                if current.preparing == nil && !orderMoving { return }
             }
         }
         .toolbar {
@@ -722,4 +726,51 @@ struct SafariView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+}
+
+/// Right after "Save rules": the backend is still comparing stores, writing the rules to ENS and planning.
+/// Shows the running step, and the reason in plain words if setup stopped.
+private struct SetupCard: View {
+    let request: HeroRequest
+    private static let steps = ["Comparing stores", "Writing your rules to ENS", "Planning when to buy"]
+
+    var body: some View {
+        HeroCard {
+            VStack(alignment: .leading, spacing: Theme.spacingS) {
+                if let error = request.setupError {
+                    Label("Setup stopped", systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.accentRed)
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                } else {
+                    let now = Self.steps.firstIndex(of: request.preparing ?? "") ?? 0
+                    ForEach(Array(Self.steps.enumerated()), id: \.offset) { i, step in
+                        HStack(spacing: 10) {
+                            Group {
+                                if i < now { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accentGreen) }
+                                else if i == now { ProgressView().controlSize(.small) }
+                                else { Image(systemName: "circle").foregroundStyle(Theme.textSecondary.opacity(0.5)) }
+                            }
+                            .frame(width: 18)
+                            Text(step)
+                                .font(.subheadline)
+                                .foregroundStyle(i <= now ? Theme.textPrimary : Theme.textSecondary)
+                        }
+                    }
+                    .animation(.snappy, value: request.preparing)
+                }
+                // step-level problems (a failed store search, a reverted tx) are in the activity feed, in red
+                if let problem = request.activity.last(where: { $0.blocked == true }), request.setupError == nil {
+                    Text(problem.text)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.accentRed)
+                        .textSelection(.enabled)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }

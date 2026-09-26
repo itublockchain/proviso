@@ -72,6 +72,8 @@ final class Store {
         } catch APIError.sessionExpired {
             clearSessionLocally()
             throw APIError.sessionExpired
+        } catch let e as URLError {
+            throw APIError.server("Can't reach the Proviso server (\(e.localizedDescription)). Check the backend URL in Settings and that it is running.")
         }
     }
 
@@ -167,9 +169,11 @@ final class Store {
         try await run { try await api.chat(requestId: requestId, message: message) }
     }
 
+    /// Returns as soon as the backend has the request (its setup keeps running); opens its page.
     func submitDraft(_ draft: RequestDraft) async throws {
         let created = try await run { try await api.createRequest(draft) }
         requests.insert(created, at: 0)
+        showRequest(created.id)
     }
 
     func updateBudget(name: String, limitUsd: Double, pct: Double?) async throws {

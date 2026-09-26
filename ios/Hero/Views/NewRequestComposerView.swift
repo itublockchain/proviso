@@ -21,8 +21,6 @@ struct NewRequestComposerView: View {
     @State private var errorMessage: String?
 
     @State private var isSubmitting = false
-    @State private var submitStep = 0
-    private static let submitSteps = ["Comparing stores…", "Reading the price history…", "Writing your rules to ENS…", "Almost there…"]
 
     var body: some View {
         NavigationStack {
@@ -82,9 +80,8 @@ struct NewRequestComposerView: View {
             Button(action: confirm) {
                 HStack(spacing: 10) {
                     if isSubmitting { ProgressView().tint(.white) }
-                    Text(isSubmitting ? Self.submitSteps[submitStep] : "Save rules & start watching")
+                    Text(isSubmitting ? "Saving…" : "Save rules & start watching")
                         .fontWeight(.semibold)
-                        .contentTransition(.opacity)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
@@ -92,11 +89,9 @@ struct NewRequestComposerView: View {
             .buttonStyle(.glassProminent)
             .tint(Theme.accentBlue)
             .disabled(isSubmitting)
-            .animation(.easeInOut(duration: 0.25), value: submitStep)
             .sensoryFeedback(.impact(weight: .medium), trigger: isSubmitting) { _, new in new }
 
-            Text(isSubmitting ? "Proviso is checking every store and signing your rules. This takes a few seconds."
-                              : "Your rules are saved on your ENS name. Above your max, Proviso simply can't pay.")
+            Text("Your rules are saved on your ENS name. Above your max, Proviso simply can't pay.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -163,15 +158,7 @@ struct NewRequestComposerView: View {
         guard let draft, !isSubmitting else { return }
         inputFocused = false
         isSubmitting = true
-        submitStep = 0
-        let ticker = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(4))
-                if submitStep < Self.submitSteps.count - 1 { submitStep += 1 }
-            }
-        }
         Task {
-            defer { ticker.cancel() }
             do {
                 try await store.submitDraft(draft)
                 dismiss()

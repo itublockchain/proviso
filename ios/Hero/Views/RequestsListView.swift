@@ -94,6 +94,8 @@ private struct RequestRow: View {
     }
 
     private var statusText: String {
+        if request.setupError != nil { return "Setup stopped" }
+        if request.preparing != nil { return "Setting up…" }
         switch request.status {
         case .bought:
             if let order = request.order { return order.status.capitalized }

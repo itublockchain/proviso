@@ -99,6 +99,10 @@ struct HeroRequest: Codable, Identifiable, Hashable {
     var listPrice: Double? = nil
     /// True when `priceHistory` is synthetic (seeded around the live price), not observed.
     var historyModeled: Bool? = nil
+    /// The setup step still running on the backend right after creation ("Comparing stores", …); nil when done.
+    var preparing: String? = nil
+    /// Why setup stopped, in words to show as-is.
+    var setupError: String? = nil
 }
 
 /// One store's live price for the request's product (`HeroRequest.offers`).

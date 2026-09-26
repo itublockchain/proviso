@@ -95,7 +95,7 @@ final class LiveAPI: API {
             let body = try? JSONDecoder().decode([String: String].self, from: data)
             if http.statusCode == 401, body?["error"] == "sign_in_required" { throw APIError.sessionExpired }
             if http.statusCode == 409, body?["error"] == "wallet_required" { throw APIError.walletRequired }
-            if let message = body?["error"] { throw APIError.server(message) }
+            if let message = body?["message"] ?? body?["error"] { throw APIError.server(message) } // a readable message when the backend sends one
             throw APIError.badResponse
         }
     }
