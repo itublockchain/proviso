@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0060C6E9ED3AE3A0945C59C6 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B14F8F7EC645703B5795B1E /* Store.swift */; };
+		0D135DEDA9DC1E4E78FB7E29 /* WalletSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29C1E9AF9F1A37DD3F335720 /* WalletSetupView.swift */; };
 		261C84054DE90F3B3A6F9500 /* ApprovalDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 621EB3F7EE29C00394D482DC /* ApprovalDetailView.swift */; };
 		316701519448BA603D3799A3 /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E7924FE11FF97F83166184F /* API.swift */; };
 		34A67D9232F79D4029E1CA0C /* ApprovalsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D40E15FAE69E2050AC428F7 /* ApprovalsListView.swift */; };
@@ -32,6 +33,7 @@
 		19A351E1B965DC22671F0C8C /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
 		1B6BB2BB28F2A26B87D997E0 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		21097D3CECB2887ADE550209 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		29C1E9AF9F1A37DD3F335720 /* WalletSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletSetupView.swift; sourceTree = "<group>"; };
 		3B14F8F7EC645703B5795B1E /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
 		3DCBE3E4A2F4BD4A58419C38 /* WorldSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorldSignIn.swift; sourceTree = "<group>"; };
 		5429EBB80805670AB259517A /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
@@ -65,6 +67,7 @@
 				9DC7D820B62C4558B7D2427C /* RequestsListView.swift */,
 				A05DEFA500E44BABB3B5A161 /* SettingsView.swift */,
 				21097D3CECB2887ADE550209 /* SignInView.swift */,
+				29C1E9AF9F1A37DD3F335720 /* WalletSetupView.swift */,
 				E64E1536E7EA6A302C26ABB7 /* WorldID.swift */,
 			);
 			path = Views;
@@ -191,6 +194,7 @@
 				5F68FB69EBA7A49CD6311880 /* SignInView.swift in Sources */,
 				0060C6E9ED3AE3A0945C59C6 /* Store.swift in Sources */,
 				D9276798B5AE711C116B1BE9 /* Theme.swift in Sources */,
+				0D135DEDA9DC1E4E78FB7E29 /* WalletSetupView.swift in Sources */,
 				37DC45F65722BE5C5713ED95 /* WorldID.swift in Sources */,
 				AC97D893E99E8C61BB021913 /* WorldSignIn.swift in Sources */,
 			);
