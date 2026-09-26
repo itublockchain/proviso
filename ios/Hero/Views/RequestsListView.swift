@@ -3,17 +3,20 @@ import SwiftUI
 struct RequestsListView: View {
     @Environment(Store.self) private var store
     @State private var searchText = ""
+    @State private var ordersOnly = false
 
     private var filtered: [HeroRequest] {
-        guard !searchText.isEmpty else { return store.requests }
-        return store.requests.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+        var base = store.requests
+        if ordersOnly { base = base.filter { $0.order != nil && $0.order?.status != "delivered" } }
+        guard !searchText.isEmpty else { return base }
+        return base.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 if !store.requests.isEmpty {
-                    RequestsSummaryHeader(requests: store.requests, spentThisMonth: spentThisMonth)
+                    RequestsSummaryHeader(requests: store.requests, spentThisMonth: spentThisMonth, ordersOnly: $ordersOnly)
                     HairlineDivider()
                 }
                 Group {
@@ -70,19 +73,28 @@ struct RequestsListView: View {
     }
 }
 
-/// Quiet stat strip above the list — total watching, needs approval, spent this month.
+/// Quiet stat strip above the list — total watching, needs approval, spent this month, and
+/// orders in transit (tap to filter the list down to those — the lightweight "Orders" place).
 private struct RequestsSummaryHeader: View {
     let requests: [HeroRequest]
     let spentThisMonth: Double
+    @Binding var ordersOnly: Bool
 
     private var watching: Int { requests.filter { $0.status == .watching }.count }
     private var needsApproval: Int { requests.filter { $0.status == .needsApproval }.count }
+    private var inTransit: Int { requests.compactMap(\.order).filter { $0.status != "delivered" }.count }
 
     var body: some View {
         HStack(spacing: Theme.spacingL) {
             stat("Watching", "\(watching)")
             stat("Needs approval", "\(needsApproval)", color: needsApproval > 0 ? Theme.accentAmber : Theme.textPrimary)
             stat("Spent this month", spentThisMonth.usd)
+            if inTransit > 0 {
+                Button { ordersOnly.toggle() } label: {
+                    stat("In transit", "\(inTransit)", color: ordersOnly ? Theme.accentBlue : Theme.textPrimary)
+                }
+                .buttonStyle(.plain)
+            }
             Spacer()
         }
         .padding(.horizontal, Theme.spacingM)
@@ -132,6 +144,7 @@ private struct RequestRow: View {
     private var statusText: String {
         switch request.status {
         case .bought:
+            if let order = request.order { return order.status.capitalized }
             return "Bought \((request.boughtAt ?? request.deadline).formatted(date: .abbreviated, time: .omitted))"
         default:
             return request.status.label
