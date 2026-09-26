@@ -128,7 +128,10 @@ CAT=$(c call $TOP 'getSubregistry(string)(address)' hobby 2>/dev/null || echo $Z
 eq "$(c call $CAT 'findOwner(string)(address)' $LABEL)" "$U" "request name registered, owned by the user"
 eq "$(c call $CAT 'getResolver(string)(address)' $LABEL)" "$RES" "request name resolver = the user's"
 eq "$(num $CAT 'findExpiry(string)(uint64)' $LABEL)" "$(node -e 'console.log(Math.floor(Date.parse(process.argv[1])/1000))' "$DEADLINE")" "request name expiry = deadline"
-until_text "$NAME" description "Proviso policy: buys on its own up to \$100, asks the owner up to \$200, until ${DEADLINE:0:10}"
+for _ in $(seq 40); do [ -n "$(text "$NAME" status)" ] && [ -n "$(text "$NAME" description)" ] && break; sleep 1; done
+DESC=$(text "$NAME" description) ST=$(text "$NAME" status)
+eq "${DESC%%. Now: *}" "Proviso policy: buys on its own up to \$100, asks the owner up to \$200, until ${DEADLINE:0:10}" "UR text description = the rules"
+eq "${DESC#*. Now: }" "$ST" "description ends with the agent's live status ($ST)"
 eq "$(text "$NAME" max)" "200 USDC" "UR text max"
 eq "$(text "hobby.$ROOT" limit)" "1500 USDC" "UR text limit on the category (resolver initializer)"
 

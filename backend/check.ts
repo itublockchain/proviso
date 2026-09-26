@@ -357,7 +357,12 @@ assert.equal((await get("/api/me", mallory)).status, 401);
 assert.equal(JSON.parse(readFileSync(join(stateDir, ".accounts.json"), "utf8"))[`${ISS}|mallory-sub`], undefined);
 assert.ok(!readFileSync(join(stateDir, ".state.json"), "utf8").includes(dup[2]));
 assert.deepEqual((await (await get("/api/requests", session)).json()).map((x: any) => x.id), [req1.id]); // other accounts untouched
-const { mergeDraft } = await import("./hero.js");
+const { mergeDraft, statusLine } = await import("./hero.js");
+const sr = { status: "watching", currentPrice: 170, autoUsd: 150, activity: [] as any[] } as any;
+assert.equal(statusLine(sr), "watching: $170 now, buys on its own at $150 or less");
+assert.equal(statusLine({ ...sr, activity: [{ text: "Above your $300 max at $320 — not bought", blocked: true }] }), "watching; last attempt blocked: Above your $300 max at $320 — not bought");
+assert.equal(statusLine({ ...sr, status: "needsApproval", currentPrice: 199 }), "needs approval: $199 is above auto $150, waiting for the owner's World ID");
+assert.equal(statusLine({ ...sr, status: "bought", boughtPrice: 149, orderId: "PV-1A2B3C4D" }), "bought for $149, order PV-1A2B3C4D");
 const h0 = { title: "Tv", query: "tv", category: "Hobby", autoUsd: 400, maxUsd: 500, deadline: "2026-10-27T00:00:00Z" };
 const m0 = mergeDraft(h0, { title: "Sony TV", autoUsd: null, maxUsd: "600", category: "needs", deadlineDays: null });
 assert.deepEqual([m0.title, m0.autoUsd, m0.maxUsd, m0.category, m0.deadline], ["Sony TV", 480, 600, "Needs", h0.deadline]);

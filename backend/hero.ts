@@ -52,6 +52,7 @@ type Req = Draft & {
   priceHistory: { date: string; price: number }[]; events: { date: string; name: string }[];
   activity: { date: string; text: string; txHash?: string; blocked?: boolean }[]; // blocked: a policy/contract rejection
   demoFrom?: number; // price before the first demo lever pull, restored by "reset"
+  publishedStatus?: string; // last status line written to ENS (status + description records)
 };
 type Approval = {
   id: string; requestId: string; cartHash: Hex; order: any; price: number; status: "pending" | "approved" | "denied" | "expired" | "paid";
@@ -447,7 +448,8 @@ const setTexts = (name: string, texts: Record<string, string>) =>
 /** Its own tx, so a resolver made before the operator's text grants reverts here and never in the data write. */
 async function writeTexts(r: Req) {
   if (!ENS.ownerKey || !r.ctx.resolver) return;
-  await send(ENS.ownerKey, r.ctx.resolver, ENS_ABI, "multicall", [setTexts(r.ensName, policyTexts(r.autoUsd, r.maxUsd, r.deadline))]);
+  const { description, ...rules } = policyTexts(r.autoUsd, r.maxUsd, r.deadline); // description carries the live status: publishStatuses
+  await send(ENS.ownerKey, r.ctx.resolver, ENS_ABI, "multicall", [setTexts(r.ensName, rules)]);
 }
 
 const getSub = (reg: Hex, label: string) => pub.readContract({ address: reg, abi: ENS_ABI, functionName: "getSubregistry", args: [label] });
@@ -503,10 +505,32 @@ async function buildTree(a: Account) {
   ]);
 }
 
-/** The agent's only ENS write right: the `status` text record. */
-async function agentStatus(r: Req, status: string) {
-  if (!CHAIN.agentKey || !r.ctx.resolver) return;
-  await send(CHAIN.agentKey, r.ctx.resolver, ENS_ABI, "setText", [dnsEncode(r.ensName), "status", status]).catch((e) => console.error("status write", e?.shortMessage ?? e));
+/** What the agent is doing about this request, in one line. */
+export function statusLine(r: Pick<Req, "status" | "currentPrice" | "autoUsd" | "boughtPrice" | "orderId" | "activity">): string {
+  const last = r.activity.at(-1);
+  if (r.status === "bought") return `bought for ${usd(r.boughtPrice ?? 0)}${r.orderId ? `, order ${r.orderId}` : ""}`;
+  if (r.status === "expired") return "expired: the deadline passed, nothing was bought";
+  if (r.status === "needsApproval") return `needs approval: ${usd(r.currentPrice)} is above auto ${usd(r.autoUsd)}, waiting for the owner's World ID`;
+  if (last?.blocked) return `watching; last attempt blocked: ${last.text}`;
+  return `watching: ${usd(r.currentPrice)} now, buys on its own at ${usd(r.autoUsd)} or less`;
+}
+
+/** Every status change reaches ENS: the agent key writes `status` (its only ENS write right) and the operator refreshes
+ *  `description` = the rules + the status, the record explorers show. Runs on a timer, after the request's policy tx. */
+function publishStatuses() {
+  if (!CHAIN.agentKey || !ENS.ownerKey) return;
+  for (const r of requests.values()) {
+    const line = statusLine(r);
+    if (!r.ctx.resolver || r.publishedStatus === line) continue;
+    r.publishedStatus = line;
+    persist();
+    const desc = `${policyTexts(r.autoUsd, r.maxUsd, r.deadline).description}. Now: ${line}`;
+    const failed = (what: string) => (e: any) => { console.error(what, r.ensName, e?.shortMessage ?? e?.message ?? e); if (r.publishedStatus === line) r.publishedStatus = undefined; };
+    void (policyTxs.get(r.id) ?? Promise.resolve()).then(() => Promise.all([
+      send(CHAIN.agentKey!, r.ctx.resolver!, ENS_ABI, "setText", [dnsEncode(r.ensName), "status", line]).catch(failed("status write")),
+      send(ENS.ownerKey!, r.ctx.resolver!, ENS_ABI, "setText", [dnsEncode(r.ensName), "description", desc]).catch(failed("description write")),
+    ]));
+  }
 }
 
 /** Demo wallet: PolicySpender.continuity(alice) must be this account's World ID for its mid-band approvals (last demo user wins). */
@@ -525,6 +549,7 @@ function resolverInit(user: Hex, root: string, limits: Record<string, number>, o
   const grant = (setter: Hex, who: Hex) => e("grantSetterRoles", [setter, who]);
   return e("initialize", [[{ account: user, roleBitmap: ALL_ROLES }, { account: FACTORY, roleBitmap: ALL_ROLES }], [
     e("setAddress", [dnsEncode(root), 60n, user]),
+    ...setTexts(root, { description: `Proviso account. Monthly budgets: ${Object.entries(limits).map(([c, v]) => `${c.toLowerCase()} ${usd(v)}`).join(", ")}; rules per purchase live on <item>.<category>.${root}` }),
     ...Object.entries(limits).flatMap(([c, usd]) => [
       e("setData", [dnsEncode(`${c.toLowerCase()}.${root}`), "limit", u256(Math.round(usd * 1e6))]),
       ...setTexts(`${c.toLowerCase()}.${root}`, categoryTexts(c, usd)),
@@ -729,10 +754,9 @@ async function fulfil(r: Req, order: ReturnType<typeof makeOrder>, txHash: Hex |
   return o;
 }
 
-/** Order + agent status after every successful buy; the ENS status write is not awaited (it is a ~12 s tx). */
+/** Merchant order after every successful buy (its ENS status follows via publishStatuses). */
 async function afterBuy(r: Req, order: ReturnType<typeof makeOrder>, txHash: Hex | undefined, human: boolean) {
-  const o = await fulfil(r, order, txHash, human).catch((e) => void console.error("fulfil", e?.shortMessage ?? e?.message ?? e));
-  void agentStatus(r, o ? `bought ${o.id}` : "bought");
+  await fulfil(r, order, txHash, human).catch((e) => void console.error("fulfil", e?.shortMessage ?? e?.message ?? e));
 }
 
 /** Demo clock: 7 days of shipping in 45 s, computed on read. */
@@ -1000,6 +1024,7 @@ async function createRequest(d: Draft, a: Account | undefined, deps: Deps): Prom
 }
 
 export function mountHero(app: Express, deps: Deps) {
+  setInterval(publishStatuses, 5000).unref(); // ponytail: 5 s sweep, not per-transition hooks; one line per change, never per price tick
   // Sign in with World ID (authorization code + PKCE). Every World ID gets its own account.
   const redirectUri = () => `${(process.env.PUBLIC_URL ?? "").replace(/\/$/, "")}/auth/world/callback`; // exact registered callback
   app.get("/auth/world/start", async (_req, res) => {
