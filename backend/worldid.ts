@@ -59,7 +59,7 @@ export async function verifyIdToken(jwt: string, o: { notBefore: number; nonce?:
   if (typeof c.sub !== "string" || !c.sub) throw new Error("missing sub");
   if (typeof c.auth_time !== "number" || c.auth_time < o.notBefore / 1000 - 5) throw new Error("World ID proof is not fresh for this attempt");
   if (c.auth_time > now + 60) throw new Error("auth_time in the future");
-  if (c.acr !== undefined && c.acr !== ACR) throw new Error("unexpected acr");
+  if (c.acr !== ACR) throw new Error(`not an Orb-verified World ID (acr ${c.acr ?? "missing"})`);
   if (o.nonce !== undefined && c.nonce !== o.nonce) throw new Error("nonce mismatch");
   return c;
 }

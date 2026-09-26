@@ -59,7 +59,7 @@ Proviso moves the guarantees on-chain:
 
 ### World ID
 
-- **Sign in with World ID (mandatory).** OIDC authorization code + PKCE against the World ID for Agents IdP. The first World ID to sign in becomes the owner; the pairwise `sub` is committed on-chain as the account's continuity id.
+- **Sign in with World ID (mandatory).** OIDC authorization code + PKCE against the World ID for Agents IdP. Each World ID gets its own account (`<username>.proviso.eth`, its own wallet and resolver); the pairwise `sub` is committed on-chain as that account's continuity id. The ID token must carry `acr` = Orb (`https://world.org/oidc/acr/orb-v3`).
 - **Fresh approval for important actions.** Mid-band purchases start an OIDC device authorization grant. The app shows the user code and opens the World ID page in-app. The backend validates the ID token (RS256/JWKS, issuer, audience, `auth_time` newer than the attempt, `acr` orb-v3) and checks `sub` against the owner. Declined, expired, or a different World ID → nothing is bought.
 - **On-chain Proof of Human path (IDKit).** `buy()` also accepts a World ID 3.0 Orb proof verified by the World ID router on Sepolia, with the order hash as the signal and the owner's nullifier pinned in the account. This was verified end to end with simulator proofs.
 
@@ -129,6 +129,8 @@ iOS: `cd ios && xcodegen generate && open Hero.xcodeproj`. Settings → turn off
 
 - **The attester is trusted.** World ID for Agents returns an OIDC ID token (RS256), which the backend validates and turns into an EIP-712 approval. The contract checks the attester, the owner's continuity id, freshness and the order, but it cannot re-verify the IdP signature itself. The IDKit path (`buy()`) has no such trust: the proof is verified by the World ID router on-chain.
 - **The operator key writes each request's rules.** When you save a request in the app, Proviso's operator key (not the AI agent) writes its `auto`/`max`/`deadline` to your resolver, a setter role your one onboarding signature approved. So Proviso the service, unlike the agent, could set a request's bands up to your category `limit`; it can never change the `limit` itself, which only your wallet can. In a production app the owner would sign each request's record write in their wallet.
+- **The merchant registry is Proviso's.** The operator key controls `hero-verified.eth`, so Proviso decides which merchants the agent may pay on its own (auto band); mid-band payments still need the owner's World ID.
+- **The onboarding signature commits to the account config as a hash.** One EIP-2612 permit fixes root, resolver, agent and World ID link through its `deadline` (a hash the contract recomputes); MetaMask shows the permit amount and spender, not those fields in clear.
 - **The demo wallet is held by the backend** (`alice.proviso.eth`), so demo-mode buys come from a key Proviso holds; wallet-mode users keep their own keys.
 - **Testnet everything:** Sepolia, MockUSDC, World ID sandbox (mocked proofs), IDKit staging.
 
