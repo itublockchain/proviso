@@ -28,6 +28,13 @@ enum Theme {
 
     static let cardCorner: CGFloat = 16
     static let cardPadding: CGFloat = 16
+
+    /// Consistent spacing scale used across the redesigned screens.
+    static let spacingXS: CGFloat = 4
+    static let spacingS: CGFloat = 8
+    static let spacingM: CGFloat = 16
+    static let spacingL: CGFloat = 24
+    static let spacingXL: CGFloat = 32
 }
 
 private extension UIColor {
@@ -39,19 +46,49 @@ private extension UIColor {
     }
 }
 
-/// Reusable card container matching the Hero design language: rounded corners, hairline border.
+/// Reserved surface — use only where a container carries real meaning (the one pending
+/// approval action, the World ID code, a terminal success/failure state). Everything else in
+/// the app should be plain typography with hairline dividers, not a boxed card.
 struct HeroCard<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
         content
             .padding(Theme.cardPadding)
-            .background(Theme.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)
-                    .strokeBorder(Theme.border, lineWidth: 1)
-            )
+            .background(Theme.cardBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: .black.opacity(0.05), radius: 16, y: 6)
+    }
+}
+
+/// Small-caps-style section label used to separate content without boxing it in a card.
+struct SectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.caption.weight(.semibold))
+            .kerning(0.6)
+            .foregroundStyle(Theme.textSecondary)
+    }
+}
+
+/// Full-bleed hairline divider matching Theme.border.
+struct HairlineDivider: View {
+    var body: some View {
+        Rectangle().fill(Theme.border).frame(height: 1)
+    }
+}
+
+/// Compact colored dot + label used for status in list rows — replaces heavy pills there.
+struct StatusDot: View {
+    let color: Color
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(label).font(.caption).foregroundStyle(Theme.textSecondary)
+        }
     }
 }
 
