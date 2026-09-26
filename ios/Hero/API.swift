@@ -16,6 +16,9 @@ protocol API: Sendable {
     func startWallet(handle: String?) async throws -> WalletStart
     func useDemoWallet() async throws
     func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest
+    /// POST api/dev/reset — hackathon-only: wipes the signed-in account (chain + backend rows),
+    /// frees their ENS name; the session is invalid immediately after this returns.
+    func resetEverything() async throws -> ResetResult
 }
 
 enum APIError: Error, LocalizedError {
@@ -26,6 +29,9 @@ enum APIError: Error, LocalizedError {
     case walletRequired
     /// Any other `{"error": "..."}` body from a non-2xx response, shown to the user as-is.
     case server(String)
+    /// api/dev/reset returned 404/403 (older backend, or disabled) — caller falls back to a
+    /// local-only reset.
+    case resetUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -34,6 +40,7 @@ enum APIError: Error, LocalizedError {
         case .sessionExpired: return "Your session expired. Sign in again."
         case .walletRequired: return "Only your wallet can change this"
         case .server(let message): return message
+        case .resetUnavailable: return "Server reset unavailable"
         }
     }
 }
@@ -159,5 +166,15 @@ final class LiveAPI: API {
     private struct DemoBody: Encodable { var scenario: DemoScenario }
     func demo(requestId: String, scenario: DemoScenario) async throws -> HeroRequest {
         try await send("POST", "api/requests/\(requestId)/demo", body: DemoBody(scenario: scenario))
+    }
+
+    private struct ResetResponse: Decodable { var ok: Bool; var reset: ResetResult }
+    func resetEverything() async throws -> ResetResult {
+        let request = authorizedRequest(baseURL.appendingPathComponent("api/dev/reset"), method: "POST")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
+        if http.statusCode == 404 || http.statusCode == 403 { throw APIError.resetUnavailable }
+        try Self.validate(response, data)
+        return try decoder.decode(ResetResponse.self, from: data).reset
     }
 }

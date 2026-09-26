@@ -565,6 +565,22 @@ actor MockAPI: API {
         }
     }
 
+    /// Mirrors POST api/dev/reset: clears the mock account and data back to fresh-install fixtures.
+    func resetEverything() async throws -> ResetResult {
+        let requestsCount = requests.count
+        let ordersCount = requests.filter { $0.order != nil }.count
+        let ensName = (walletStatus == .ready || walletStatus == .demo) ? MockData.wallet.ensRoot : nil
+        requests = MockData.requests
+        approvals = MockData.approvals
+        categories = [MockData.hobbyCategory, MockData.needsCategory]
+        worldLinked = false
+        pendingWorldLinkId = nil
+        signedIn = false
+        walletStatus = .none
+        demoFrom = [:]
+        return ResetResult(chain: true, ens: ensName, requests: requestsCount, orders: ordersCount)
+    }
+
     private static func randomUserCode() -> String {
         let letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
         func group() -> String { String((0..<4).map { _ in letters.randomElement()! }) }

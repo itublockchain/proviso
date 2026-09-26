@@ -255,3 +255,12 @@ struct WalletStart: Codable {
 
 /// The `acr` value World ID reports for an Orb-verified human (see backend `worldid.ts`).
 let orbVerifiedAcr = "https://world.org/oidc/acr/orb-v3"
+
+/// POST api/dev/reset `reset` payload — hackathon-only: wipes the signed-in account (chain
+/// state, ENS name, backend rows) so the same wallet + World ID can onboard again from scratch.
+struct ResetResult: Codable {
+    var chain: Bool
+    var ens: String?
+    var requests: Int
+    var orders: Int
+}
