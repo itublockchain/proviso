@@ -10,9 +10,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 import { approvalTypedData, loginUrl, oidcEnabled, pollDevice, redeemLogin, startDevice, takeLogin, type Claims, type Device } from "./worldid.js";
 
-type Offer = { sku: string; title: string; merchant: string; priceMinor: number; image?: string };
+import { compareStores, type Offer, type searchProducts } from "./monid.js";
+
 type Deps = {
-  searchCatalog: (q: string, maxMinor?: number) => Promise<Offer[]>;
+  searchProducts: typeof searchProducts; // injected so check.ts runs offline
   startWorldApproval: (o: any) => Promise<void>;
   advanceWorld: (o: any) => Promise<void>;
 };
@@ -37,10 +38,12 @@ const EVENTS = [
 type Draft = { title: string; query: string; category: string; autoUsd: number; maxUsd: number; deadline: string };
 /** Whose money and policy tree a request uses: the account's own wallet + resolver, or the Hero-held demo wallet (alice). */
 type Ctx = { acct?: string; demo: boolean; payer?: Hex; root: string; resolver?: Hex; continuity?: Hex };
+type StoreOffer = { store: string; price: number; url: string; image?: string; rating?: number; source: string };
 type Req = Draft & {
   acct?: string; ctx: Ctx; // owner account key (undefined = no session) and its context when the request was made
   id: string; imageUrl?: string; ensName: string; status: "watching" | "readyToBuy" | "needsApproval" | "bought" | "expired";
   currentPrice: number; targetPrice?: number; merchant?: string; offer?: Offer; boughtAt?: number; boughtPrice?: number;
+  offers?: StoreOffer[]; listPrice?: number; historyModeled?: boolean; // live store comparison (Monid); the 90-day history is modeled
   orderId?: string; // the merchant order (HD-…) of the current purchase
   strategy?: { summary: string; bullets: string[]; buyBy: string; confidence: number };
   priceHistory: { date: string; price: number }[]; events: { date: string; name: string }[];
@@ -221,8 +224,10 @@ async function strategize(r: Req) {
   const missed = EVENTS.find((e) => e.date > buyBy);
   const inflation = cur / median - 1;
   const target = Math.round(Math.min(r.autoUsd, sale ? median * 0.9 : median));
+  const o = r.offers ?? [], pct = r.listPrice && Math.round((1 - o[0]?.price / r.listPrice) * 100);
   const bullets = [
-    `Now ${usd(cur)} vs 90-day median ${usd(median)} (${inflation >= 0 ? "+" : ""}${(inflation * 100).toFixed(0)}%).`,
+    ...(o.length > 1 ? [`Cheapest of ${o.length} stores compared live (${o.slice(0, 4).map((x) => x.store).join(", ")}${o.length > 4 ? "…" : ""}): ${usd(o[0].price)} at ${o[0].store}${pct ? `, ${pct}% below list ${usd(r.listPrice!)}` : ""}.`] : []),
+    `Now ${usd(cur)} vs modeled 90-day median ${usd(median)} (${inflation >= 0 ? "+" : ""}${(inflation * 100).toFixed(0)}%).`,
     sale
       ? `${sale.name} falls before your buy-by date; past sales cut this price ~14%.`
       : missed ? `${missed.name} is after your deadline, so waiting for it is not an option.` : `No major sale before your deadline.`,
@@ -750,14 +755,17 @@ function requestView(r: Req) {
   return { ...v, boughtAt: boughtAt ? iso(boughtAt) : undefined, order: o && orderView(o) };
 }
 
-/** Best catalog match: shares the query's words and is not suspiciously cheap (accessories, cables, cases). */
-function pickOffer(d: Draft, offers: Offer[]): Offer | undefined {
-  const words = d.query.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
-  const score = (o: Offer) => words.filter((w) => o.title.toLowerCase().includes(w)).length / Math.max(1, words.length);
-  return offers
-    .filter((o) => o.priceMinor / 100 >= 0.5 * d.autoUsd && score(o) >= 0.5)
-    .sort((a, b) => score(b) - score(a))[0];
+/** Store comparison (cheapest first) onto the request: the cheapest store is the pick (store, listing, image); the app gets the top 5. */
+function setOffers(r: Req, offers: Offer[]) {
+  const best = offers[0], top = offers.slice(0, 5);
+  if (!best) return;
+  const list = Math.max(best.listMinor ?? 0, ...top.map((o) => o.priceMinor)) / 100; // the store's "usually" price, else the dearest store
+  Object.assign(r, {
+    offer: best, merchant: best.store, imageUrl: best.image ?? r.imageUrl, listPrice: list > best.priceMinor / 100 ? list : undefined,
+    offers: top.map((o): StoreOffer => ({ store: o.store, price: o.priceMinor / 100, url: o.url, image: o.image, rating: o.rating, source: o.source })),
+  });
 }
+const sources = (offers: Offer[]) => [...new Set(offers.map((o) => (o.source === "amazon" ? "Amazon" : "Google Shopping")))].join(" + ");
 
 /** Stage demo lever: a price inside the request's own bands, so each scenario lands where it should (undefined = no such band). */
 export type Scenario = "auto" | "approval" | "blocked" | "attack";
@@ -976,18 +984,20 @@ export function mountHero(app: Express, deps: Deps) {
     const a = acctOf(res), ctx = ctxOf(a);
     const id = randomUUID().slice(0, 8);
     const slug = `${d.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20)}-${id.slice(0, 4)}`; // unique ENS label
-    const offer = pickOffer(d, await deps.searchCatalog(d.query, Math.round(d.maxUsd * 115)).catch(() => []));
-    const current = offer ? offer.priceMinor / 100 : d.maxUsd * 1.05;
+    const min = 0.5 * d.autoUsd; // cheaper than half the auto limit: an accessory, not the product
+    const found = await deps.searchProducts(d.query, { minPriceUsd: min, maxPriceUsd: d.maxUsd * 1.15 }).catch(() => []);
+    const offers = await compareStores(d.query, found, { minPriceUsd: min }).catch(() => []);
+    const current = offers[0] ? offers[0].priceMinor / 100 : d.maxUsd * 1.05;
     const r: Req = {
       ...d, acct: a?.key, ctx, id, ensName: `${slug}.${d.category.toLowerCase()}.${ctx.root}`, status: "watching", currentPrice: current,
-      imageUrl: offer?.image, merchant: offer ? new URL(offer.merchant).host : undefined,
-      offer: offer && { sku: offer.sku, title: offer.title, merchant: offer.merchant, priceMinor: offer.priceMinor, image: offer.image },
-      priceHistory: history(id, current),
+      priceHistory: history(id, current), historyModeled: true, // synthetic, seeded around the live price
       events: EVENTS.map((e) => ({ date: iso(e.date), name: e.name })),
       activity: [],
     };
+    setOffers(r, offers);
     const tx = await writePolicy(r).catch((e) => void console.error("writePolicy", e?.shortMessage ?? e));
     r.activity.push({ date: iso(Date.now()), text: `Policy ${tx ? "written to ENS" : "saved (demo, no chain)"}: ${r.ensName} auto ${usd(d.autoUsd)}, max ${usd(d.maxUsd)}`, txHash: tx });
+    if (offers.length) r.activity.push({ date: iso(Date.now()), text: `Compared ${offers.length} stores via Monid (${sources(offers)}): best ${usd(current)} at ${r.merchant}` });
     requests.set(id, r);
     if (current <= d.autoUsd) await onPrice(r, current, deps); // already in the auto band: the agent acts now
     await strategize(r);
@@ -1023,6 +1033,14 @@ export function mountHero(app: Express, deps: Deps) {
         r.demoFrom = undefined;
       }
       r.activity.push({ date: iso(Date.now()), text: "Demo reset: watching again" });
+    } else if (s === "recheck") { // on-demand live price re-check at every store (never polled in the background)
+      if (requestView(r).status !== "watching") return res.status(409).json({ error: "not_watching" });
+      if (!r.offer?.product) return res.status(400).json({ error: "no_listing" });
+      const offers = await compareStores(r.query, [r.offer], { minPriceUsd: 0.5 * r.autoUsd, fresh: true });
+      setOffers(r, offers);
+      const best = r.offer.priceMinor / 100;
+      r.activity.push({ date: iso(Date.now()), text: `Re-checked ${offers.length} stores via Monid: best ${usd(best)} at ${r.merchant}` });
+      if (best !== r.currentPrice) await onPrice(r, best, deps);
     } else {
       if (!["auto", "approval", "blocked", "attack"].includes(s)) return res.status(400).json({ error: "bad_scenario" });
       if (requestView(r).status !== "watching") return res.status(409).json({ error: "not_watching" });

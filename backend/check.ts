@@ -148,7 +148,35 @@ const { mountHero, demoPrice, timeline, saveState, loadState } = await import(".
 const { default: express } = await import("express");
 const app = express();
 app.use(express.json());
-mountHero(app, { searchCatalog: async () => [] } as any);
+mountHero(app, { searchProducts: async () => [] } as any); // offline: no live listings
+
+// --- Monid listings: map both sources, drop used/rental/pawn/foreign-currency/accessory rows, dedupe, rank, one row per store ---
+const { fromGoogle, fromAmazon, rank, perStore } = await import("./monid.js");
+const g = fromGoogle([
+  { title: "Sony PlayStation 5 Console Digital Edition", price: "$455.00", extracted_price: 455, extracted_old_price: 599, source: "King of Hobby Deals",
+    product_link: "https://www.google.com/search?ibp=oshop", thumbnail: "https://t/1", rating: 4.5, gpcid: "1", litescrape_product_link: { queryParams: { gpcid: "1", q: "ps5" } } },
+  { title: "Sony PlayStation 5 Console Digital Edition", price: "$470.00", extracted_price: 470, source: "King of Hobby Deals", gpcid: "2" }, // same title+store, dearer
+  { title: "Certified Refurbished PlayStation 5 Console", price: "$399.00", extracted_price: 399, source: "PlayStation", second_hand_condition: "refurbished" },
+  { title: "Sony PlayStation 5 Pro Console - 2TB", price: "$35.99", extracted_price: 35.99, source: "Rent-A-Center" }, // weekly rent-to-own
+  { title: "Sony PlayStation 5 Slim Digital Console", price: "$389.99", extracted_price: 389.99, source: "Pawn America" },
+  { title: "Sony PS5 PlayStation Console", price: "(£315)", extracted_price: 315, source: "mcgrocer.com" }, // not USD
+  { title: "DualSense Controller for PlayStation 5 console", price: "$59.00", extracted_price: 59, source: "Walmart" }, // accessory: under the floor
+  { title: "Xbox Series X", price: "$499.00", extracted_price: 499, source: "Best Buy" }, // not the query
+]);
+const amz = fromAmazon([
+  { asin: "B0FRGMYJMG", productDescription: "PlayStation 5 Digital Edition", price: 0 }, // no buy box
+  { asin: "B0CL5KNB9M", productDescription: "PlayStation 5 Console Digital Edition Slim", price: 449, retailPrice: 499.99, productRating: "4.7 out of 5 stars", countReview: 5701, imgUrl: "https://i/2" },
+]);
+const ranked = rank("PlayStation 5 console", [...g, ...amz], 200, 600);
+assert.deepEqual(ranked.map((o) => [o.store, o.source, o.priceMinor]), [["King of Hobby Deals", "google_shopping", 45500], ["Amazon", "amazon", 44900]]); // relevance order
+assert.deepEqual([ranked[0].listMinor, ranked[0].product?.gpcid, ranked[0].merchant], [59900, "1", "https://www.google.com"]);
+assert.deepEqual([ranked[1].url, ranked[1].merchant, ranked[1].listMinor, ranked[1].rating], ["https://www.amazon.com/dp/B0CL5KNB9M", "https://www.amazon.com", 49999, 4.7]);
+assert.deepEqual(rank("Sony 55 inch 4K TV", fromGoogle([{ title: 'Samsung 55" Class 4K Smart TV', extracted_price: 400, source: "Best Buy" }, { title: "Sony BRAVIA 2 II 4K HDR LED Google TV", extracted_price: 600, source: "Best Buy" },
+  { title: "BRAVIA 2 II 43” Class 4K HDR LED Google TV", extracted_price: 400, source: "Sony" }, { title: 'Sony - 55" Class BRAVIA 2 II 4K TV', extracted_price: 599, source: "Best Buy" }]))
+  .map((o) => o.title), ["Sony BRAVIA 2 II 4K HDR LED Google TV", 'Sony - 55" Class BRAVIA 2 II 4K TV']); // brand must match; a size, if named, too
+const row = (store: string, priceMinor: number) => ({ ...ranked[0], store, priceMinor });
+assert.deepEqual(perStore([row("Walmart", 64900), row("Walmart - The Game Brain", 56999), row("gamestop.com", 54999), row("GameStop", 58999), row("Best Buy", 64999)])
+  .map((o) => [o.store, o.priceMinor]), [["gamestop.com", 54999], ["Walmart - The Game Brain", 56999], ["Best Buy", 64999]]);
 const srv = app.listen(0, "127.0.0.1");
 await once(srv, "listening");
 const base = `http://127.0.0.1:${(srv.address() as any).port}`;
@@ -234,6 +262,8 @@ const demo = async (scenario: string, token = session) => {
 const last = (x: any) => x.activity.at(-1);
 assert.equal((await demo("auto", mallory)).status, 404);
 assert.equal((await demo("nope")).status, 400);
+assert.equal((await demo("recheck")).status, 400); // no live listing to re-check
+assert.equal(req1.historyModeled, true);
 let dr = await demo("blocked");
 assert.deepEqual([dr.body.status, dr.body.currentPrice, last(dr.body).blocked], ["watching", 215.99, true]);
 assert.equal(dr.body.priceHistory.at(-1).price, 215.99);

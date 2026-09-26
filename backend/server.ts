@@ -1,4 +1,4 @@
-// CartLock MCP server: real Shopify catalog search -> pick -> human approval -> cart-bound purchase.
+// CartLock MCP server: live product search (Monid: Google Shopping + Amazon) -> pick -> human approval -> cart-bound purchase.
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -8,6 +8,7 @@ import { z } from "zod";
 import { keccak256, encodeAbiParameters, parseAbiParameters } from "viem";
 import { widgetHtml } from "./widget.js";
 import { mountHero } from "./hero.js";
+import { searchProducts, type Offer } from "./monid.js";
 import QRCode from "qrcode";
 import { IDKit, orbLegacy, type IDKitRequest } from "@worldcoin/idkit-core";
 import { signRequest } from "@worldcoin/idkit-core/signing";
@@ -22,21 +23,9 @@ globalThis.fetch = async (input: any, init?: any) => {
 };
 
 const PORT = Number(process.env.PORT ?? 8787);
-const CATALOG = "https://catalog.shopify.com/api/ucp/mcp";
-const UCP_PROFILE =
-  process.env.UCP_PROFILE ??
-  "https://shopify.dev/ucp/agent-profiles/examples/2026-08-25/valid-with-capabilities.json";
 const WIDGET_URI = "ui://cartlock/shop-v2.html";
+const IMAGES = ["https://*.gstatic.com", "https://m.media-amazon.com"]; // Google Shopping thumbnails, Amazon images
 
-type Offer = {
-  sku: string; // Shopify variant gid
-  title: string;
-  merchant: string; // merchant origin, e.g. https://altex.com
-  priceMinor: number; // USD cents
-  currency: string;
-  image?: string;
-  checkoutUrl: string;
-};
 type Order = {
   id: string;
   offer: Offer;
@@ -62,50 +51,6 @@ const WORLD = {
 
 const offers = new Map<string, Offer>(); // sku -> last seen offer (server is the source of truth for price)
 const orders = new Map<string, Order>();
-
-async function searchCatalog(query: string, maxPriceMinor?: number): Promise<Offer[]> {
-  const res = await fetch(CATALOG, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name: "search_catalog",
-        arguments: {
-          meta: { "ucp-agent": { profile: UCP_PROFILE } },
-          catalog: {
-            query,
-            filters: { available: true, ...(maxPriceMinor ? { price: { max: maxPriceMinor } } : {}) },
-            context: { address_country: "US" },
-            pagination: { limit: 8 },
-          },
-        },
-      },
-    }),
-  });
-  const json: any = await res.json();
-  const products: any[] = json?.result?.structuredContent?.products ?? [];
-  const out: Offer[] = [];
-  for (const p of products) {
-    const v = p.variants?.[0];
-    if (!v?.checkout_url || !v?.price) continue;
-    const offer: Offer = {
-      sku: v.id,
-      title: p.title,
-      merchant: new URL(v.checkout_url).origin,
-      priceMinor: v.price.amount,
-      currency: v.price.currency,
-      image: p.media?.[0]?.url ?? v.media?.[0]?.url,
-      checkoutUrl: v.checkout_url,
-    };
-    offers.set(offer.sku, offer);
-    out.push(offer);
-    if (out.length === 5) break;
-  }
-  return out;
-}
 
 // Cart hash is what the human approves and what the vault contract enforces.
 function cartHash(o: Offer, orderId: string, expiresAt: number): `0x${string}` {
@@ -180,7 +125,7 @@ async function orderView(o: Order) {
     title: o.offer.title,
     merchant: o.offer.merchant,
     price: o.offer.priceMinor / 100,
-    currency: o.offer.currency,
+    currency: "USD",
     approvalUrl: approvalUrl(o),
     denyReason: o.denyReason,
     qrSvg: o.status === "pending" ? await QRCode.toString(approvalUrl(o), { type: "svg", width: 160, margin: 1 }) : undefined,
@@ -192,7 +137,7 @@ function buildServer() {
   const server = new McpServer({ name: "cartlock", version: "0.1.0" });
 
   server.registerResource("cartlock-widget", WIDGET_URI, {}, async () => ({
-    contents: [{ uri: WIDGET_URI, mimeType: "text/html;profile=mcp-app", text: widgetHtml, _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: ["https://cdn.shopify.com"] } }, "openai/widgetCSP": { connect_domains: [], resource_domains: ["https://cdn.shopify.com"] }, "openai/widgetDescription": "Product options with Buy buttons and the World ID approval step." } }],
+    contents: [{ uri: WIDGET_URI, mimeType: "text/html;profile=mcp-app", text: widgetHtml, _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: IMAGES } }, "openai/widgetCSP": { connect_domains: [], resource_domains: IMAGES }, "openai/widgetDescription": "Product options with Buy buttons and the World ID approval step." } }],
   }));
 
   server.registerTool(
@@ -200,16 +145,17 @@ function buildServer() {
     {
       title: "Search products",
       description:
-        "Use this when the user wants to buy a physical product. Searches real Shopify stores and shows 3-5 options with a Buy button. Never buy without the user pressing Buy and approving with World ID.",
+        "Use this when the user wants to buy a physical product. Searches live listings across stores (Google Shopping and Amazon, via Monid) and shows up to 5 options with a Buy button. Never buy without the user pressing Buy and approving with World ID.",
       inputSchema: { query: z.string(), maxPriceUsd: z.number().optional() },
       annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
       _meta: { ui: { resourceUri: WIDGET_URI }, "openai/outputTemplate": WIDGET_URI, "openai/widgetAccessible": true, "openai/toolInvocation/invoking": "Searching stores…" },
     },
     async ({ query, maxPriceUsd }) => {
-      const found = await searchCatalog(query, maxPriceUsd ? Math.round(maxPriceUsd * 100) : undefined);
+      const found = (await searchProducts(query, { maxPriceUsd, minPriceUsd: maxPriceUsd ? maxPriceUsd * 0.4 : 0 })).slice(0, 5);
+      for (const o of found) offers.set(o.sku, o);
       return {
         structuredContent: { view: "options", query, offers: found },
-        content: [{ type: "text", text: found.map((o, i) => `${i + 1}. ${o.title} — $${o.priceMinor / 100} (${o.merchant})`).join("\n") || "No results." }],
+        content: [{ type: "text", text: found.map((o, i) => `${i + 1}. ${o.title} — $${o.priceMinor / 100} at ${o.store}`).join("\n") || "No results." }],
       };
     }
   );
@@ -269,6 +215,6 @@ app.post("/mcp", async (req, res) => {
   await transport.handleRequest(req, res, req.body);
 });
 app.get("/mcp", (_req, res) => res.status(405).end());
-mountHero(app, { searchCatalog, startWorldApproval, advanceWorld });
+mountHero(app, { searchProducts, startWorldApproval, advanceWorld });
 
 app.listen(PORT, () => console.log(`cartlock mcp on :${PORT}/mcp`));

@@ -5,3 +5,4 @@ node_modules/
 .accounts.json
 .state.json
 .state.json.tmp
+.monid-cache.json

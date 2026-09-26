@@ -38,7 +38,7 @@ export const widgetHtml = /* html */ `<meta charset="utf-8">
         <div class="card">
           \${o.image ? \`<img src="\${esc(o.image)}" alt="">\` : ""}
           <div class="grow"><div>\${esc(o.title)}</div>
-            <div class="muted">\${esc(new URL(o.merchant).host)} · $\${(o.priceMinor/100).toFixed(2)}</div></div>
+            <div class="muted">\${esc(o.store ?? new URL(o.merchant).host)} · $\${(o.priceMinor/100).toFixed(2)}</div></div>
           <button data-sku="\${esc(o.sku)}">Buy</button>
         </div>\`).join("") : "No results.";
       root.querySelectorAll("button[data-sku]").forEach((b) => b.onclick = async () => {
