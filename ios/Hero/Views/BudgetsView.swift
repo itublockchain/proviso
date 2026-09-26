@@ -7,20 +7,31 @@ struct BudgetsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: Theme.spacingXL) {
                     if let wallet = store.budgets?.wallet {
-                        WalletHeaderCard(wallet: wallet)
+                        WalletHeader(wallet: wallet)
                     }
-                    ForEach(store.budgets?.categories ?? []) { category in
-                        Button {
-                            editingCategory = category
-                        } label: {
-                            CategoryCard(category: category)
+                    if let categories = store.budgets?.categories, !categories.isEmpty {
+                        VStack(alignment: .leading, spacing: Theme.spacingS) {
+                            SectionHeader(title: "Categories")
+                            VStack(spacing: 0) {
+                                ForEach(categories) { category in
+                                    Button {
+                                        editingCategory = category
+                                    } label: {
+                                        CategoryRow(category: category)
+                                    }
+                                    .buttonStyle(.plain)
+                                    if category.id != categories.last?.id {
+                                        HairlineDivider()
+                                    }
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, Theme.spacingM)
+                .padding(.vertical, Theme.spacingL)
             }
             .background(Theme.background)
             .navigationTitle("Budgets")
@@ -32,28 +43,23 @@ struct BudgetsView: View {
     }
 }
 
-private struct WalletHeaderCard: View {
+private struct WalletHeader: View {
     let wallet: Wallet
 
     var body: some View {
-        HeroCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(wallet.ensRoot, systemImage: "person.crop.circle")
-                    .font(.headline)
-                    .foregroundStyle(Theme.textPrimary)
-                Text(short(wallet.address))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(Theme.textSecondary)
-                Divider().overlay(Theme.border)
-                HStack {
-                    stat("USDC Balance", wallet.usdcBalance.usd)
-                    Spacer()
-                    stat("Allowance", wallet.allowance.usd)
-                }
-                stat("Agent", short(wallet.agent))
-                Divider().overlay(Theme.border)
-                WorldIDLinkRow(worldLinked: wallet.worldLinked ?? false)
+        VStack(alignment: .leading, spacing: Theme.spacingM) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(wallet.ensRoot).font(.title2.bold()).foregroundStyle(Theme.textPrimary)
+                Text(short(wallet.address)).font(.caption.monospaced()).foregroundStyle(Theme.textSecondary)
             }
+            HStack(spacing: Theme.spacingXL) {
+                stat("USDC Balance", wallet.usdcBalance.usd)
+                stat("Allowance", wallet.allowance.usd)
+            }
+            HairlineDivider()
+            stat("Agent", short(wallet.agent))
+            HairlineDivider()
+            WorldIDLinkRow(worldLinked: wallet.worldLinked ?? false)
         }
     }
 
@@ -70,7 +76,7 @@ private struct WalletHeaderCard: View {
     }
 }
 
-private struct CategoryCard: View {
+private struct CategoryRow: View {
     let category: Category
 
     private var progress: Double {
@@ -79,37 +85,40 @@ private struct CategoryCard: View {
     }
 
     var body: some View {
-        HeroCard {
-            HStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .stroke(Theme.border, lineWidth: 6)
-                    Circle()
-                        .trim(from: 0, to: progress)
-                        .stroke(progress > 0.9 ? Theme.accentAmber : Theme.accentGreen, style: StrokeStyle(lineWidth: 6, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                    Text("\(Int(progress * 100))%")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .contentTransition(.numericText())
-                }
-                .frame(width: 56, height: 56)
-                .animation(.spring(duration: 0.5), value: progress)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(category.name).font(.headline).foregroundStyle(Theme.textPrimary)
-                    Text(category.ensName).font(.caption).foregroundStyle(Theme.textSecondary)
-                    Text("\(category.spentUsd.usd) of \(category.limitUsd.usd) spent")
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(category.name).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Text("\(category.spentUsd.usd) of \(category.limitUsd.usd)")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Theme.textSecondary)
+                }
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Theme.border)
+                        Capsule()
+                            .fill(progress > 0.9 ? Theme.accentAmber : Theme.accentGreen)
+                            .frame(width: geo.size.width * progress)
+                            .animation(.spring(duration: 0.5), value: progress)
+                    }
+                }
+                .frame(height: 4)
+
+                HStack {
+                    Text(category.ensName).font(.caption2.monospaced()).foregroundStyle(Theme.textSecondary)
+                    Spacer()
                     Text("Resets \(category.periodEnds.formatted(date: .abbreviated, time: .omitted))")
                         .font(.caption2)
                         .foregroundStyle(Theme.textSecondary.opacity(0.8))
                 }
-                Spacer()
-                Image(systemName: "chevron.right").foregroundStyle(Theme.textSecondary)
             }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary.opacity(0.5))
         }
+        .padding(.vertical, 12)
     }
 }
 
