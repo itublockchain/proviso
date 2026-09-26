@@ -4,6 +4,11 @@ import SafariServices
 
 struct RequestDetailView: View {
     let request: HeroRequest
+    @Environment(Store.self) private var store
+    /// Settings → "Show demo controls": adds a visible Demo button for rehearsal.
+    @AppStorage("hero.showDemoControls") private var showDemoControls = false
+    @State private var showDemoMenu = false
+    @State private var demoError: String?
 
     var body: some View {
         ScrollView {
@@ -24,6 +29,38 @@ struct RequestDetailView: View {
         .background(Theme.background)
         .navigationTitle(request.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if showDemoControls {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Demo") { showDemoMenu = true }
+                        .font(.footnote)
+                }
+            }
+        }
+        // Hidden stage controls: long-press the price or triple-tap the title (no visible hint).
+        .confirmationDialog("Demo", isPresented: $showDemoMenu, titleVisibility: .visible) {
+            ForEach(DemoScenario.allCases, id: \.self) { scenario in
+                Button(scenario.title, role: scenario == .reset ? .destructive : nil) { runDemo(scenario) }
+            }
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: showDemoMenu) { _, open in open }
+        .alert("Demo", isPresented: Binding(get: { demoError != nil }, set: { if !$0 { demoError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(demoError ?? "")
+        }
+    }
+
+    private func runDemo(_ scenario: DemoScenario) {
+        Task {
+            do {
+                try await store.demo(requestId: request.id, scenario: scenario)
+            } catch APIError.server("not_watching") {
+                demoError = "Already bought or waiting on you. Reset the request first."
+            } catch {
+                demoError = error.localizedDescription
+            }
+        }
     }
 
     private var heroHeader: some View {
@@ -35,6 +72,7 @@ struct RequestDetailView: View {
                         Text(request.title)
                             .font(.title2.bold())
                             .foregroundStyle(Theme.textPrimary)
+                            .onTapGesture(count: 3) { showDemoMenu = true }
                         if let merchant = request.merchant {
                             Text(merchant)
                                 .font(.subheadline)
@@ -57,7 +95,8 @@ struct RequestDetailView: View {
                 .font(.system(size: 48, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(Theme.textPrimary)
-                .contentTransition(.numericText())
+                .contentTransition(.numericText(value: request.currentPrice))
+                .onLongPressGesture(minimumDuration: 0.8) { showDemoMenu = true }
             if let target = request.targetPrice {
                 deltaLine(target: target)
             }
@@ -359,7 +398,7 @@ private struct ActivityTimeline: View {
                     ForEach(Array(sorted.enumerated()), id: \.element.id) { index, entry in
                         HStack(alignment: .top, spacing: 12) {
                             VStack(spacing: 0) {
-                                Circle().fill(Theme.accentBlue).frame(width: 6, height: 6).padding(.top, 5)
+                                Circle().fill(entry.blocked == true ? Theme.accentRed : Theme.accentBlue).frame(width: 6, height: 6).padding(.top, 5)
                                 if index < sorted.count - 1 {
                                     Rectangle().fill(Theme.border).frame(width: 1).frame(maxHeight: .infinity)
                                 }
@@ -367,7 +406,13 @@ private struct ActivityTimeline: View {
                             .frame(width: 6)
 
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.text).font(.footnote).foregroundStyle(Theme.textPrimary)
+                                if entry.blocked == true {
+                                    Label(entry.text, systemImage: "xmark.shield.fill")
+                                        .font(.footnote.weight(.medium))
+                                        .foregroundStyle(Theme.accentRed)
+                                } else {
+                                    Text(entry.text).font(.footnote).foregroundStyle(Theme.textPrimary)
+                                }
                                 HStack(spacing: 8) {
                                     Text(entry.date.formatted(date: .abbreviated, time: .shortened))
                                         .font(.caption2)

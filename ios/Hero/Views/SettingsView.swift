@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(Store.self) private var store
     @State private var showWalletSetup = false
+    @AppStorage("hero.showDemoControls") private var showDemoControls = false
 
     var body: some View {
         NavigationStack {
@@ -66,6 +67,9 @@ struct SettingsView: View {
                 set: { store.demoMode = $0 }
             ))
             .padding(.vertical, 9)
+            HairlineDivider()
+            Toggle("Show demo controls", isOn: $showDemoControls)
+                .padding(.vertical, 9)
             if !store.demoMode {
                 HairlineDivider()
                 TextField("Backend URL", text: Binding(
